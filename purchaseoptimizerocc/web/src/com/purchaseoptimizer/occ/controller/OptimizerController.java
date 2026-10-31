@@ -1,4 +1,4 @@
-package com.purchaseoptimizer.controller;
+package com.purchaseoptimizer.occ.controller;
 
 import de.hybris.platform.commercefacades.product.data.ProductData;
 import de.hybris.platform.commercewebservicescommons.dto.product.ProductListWsDTO;

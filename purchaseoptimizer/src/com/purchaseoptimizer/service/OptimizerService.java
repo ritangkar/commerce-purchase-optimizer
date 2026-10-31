@@ -3,6 +3,7 @@ package com.purchaseoptimizer.service;
 import de.hybris.platform.b2b.model.B2BCustomerModel;
 import de.hybris.platform.b2b.model.B2BUnitModel;
 
+import com.purchaseoptimizer.data.OptimizerResultData;
 import com.purchaseoptimizer.enums.BudgetTier;
 
 
@@ -12,5 +13,5 @@ import com.purchaseoptimizer.enums.BudgetTier;
  */
 public interface OptimizerService
 {
-	OptimizerResult generateSuggestedCart(B2BCustomerModel customer, B2BUnitModel unit, BudgetTier requestedTier);
+	OptimizerResultData generateSuggestedCart(B2BCustomerModel customer, B2BUnitModel unit, BudgetTier requestedTier);
 }

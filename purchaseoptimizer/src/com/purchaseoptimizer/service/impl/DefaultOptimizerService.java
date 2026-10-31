@@ -45,15 +45,13 @@ import com.purchaseoptimizer.dao.OptimizerOrderHistoryDao;
 import com.purchaseoptimizer.enums.BudgetTier;
 import com.purchaseoptimizer.enums.CandidateGroup;
 import com.purchaseoptimizer.enums.ConfidenceTier;
+import com.purchaseoptimizer.data.OptimizerResultData;
+import com.purchaseoptimizer.data.SuggestionCandidateData;
 import com.purchaseoptimizer.model.OptimizerSuggestionAuditModel;
-import com.purchaseoptimizer.service.OptimizerResult;
+import com.purchaseoptimizer.service.OptimizerCalculationService;
 import com.purchaseoptimizer.service.OptimizerService;
-import com.purchaseoptimizer.service.SuggestionCandidate;
 import com.purchaseoptimizer.service.ai.AiResponseValidator;
 import com.purchaseoptimizer.service.ai.OpenAiClient;
-import com.purchaseoptimizer.util.BasketOptimizer;
-import com.purchaseoptimizer.util.PurchaseStatistics;
-import com.purchaseoptimizer.util.SuggestionMath;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 
@@ -81,6 +79,8 @@ public class DefaultOptimizerService implements OptimizerService
 	private BaseStoreService baseStoreService;
 	@Resource(name = "modelService")
 	private ModelService modelService;
+	@Resource(name = "optimizerCalculationService")
+	private OptimizerCalculationService calc;
 	@Resource(name = "optimizerOpenAiClient")
 	private OpenAiClient openAiClient;
 	@Resource(name = "optimizerAiResponseValidator")
@@ -91,22 +91,25 @@ public class DefaultOptimizerService implements OptimizerService
 	// ------------------------------------------------------------------------------------------------ public API
 
 	@Override
-	public OptimizerResult generateSuggestedCart(final B2BCustomerModel customer, final B2BUnitModel unit,
+	public OptimizerResultData generateSuggestedCart(final B2BCustomerModel customer, final B2BUnitModel unit,
 			final BudgetTier requestedTier)
 	{
-		final OptimizerResult result = new OptimizerResult();
+		final OptimizerResultData result = new OptimizerResultData();
+		result.setAppliedTier(BudgetTier.USUAL);
+		result.setProfileSource("EXPLORATORY");
+		result.setReasonCode("OK");
+		result.setLines(new ArrayList<>());
 		final Date now = new Date();
 		final Date from = Date.from(ZonedDateTime.now().minusMonths(intProp("history.months", 12)).toInstant());
 		final Date openFrom = Date.from(ZonedDateTime.now().minusDays(intProp("open.lookback.days", 120)).toInstant());
 
 		// 1. History with hygiene
 		final List<OrderEntryModel> completed = orderHistoryDao.findOrderEntries(unit, from, csv("status.completed"));
-		final Map<OrderEntryModel, Long> returned = orderHistoryDao.findReturnedQuantities(unit, from);
 		final List<OrderEntryModel> openEntries = orderHistoryDao.findOrderEntries(unit, openFrom, csv("status.open"));
 
 		final Map<String, List<Purchase>> byProduct = new LinkedHashMap<>();
 		final Map<String, Double> orderValues = new LinkedHashMap<>();
-		collectHistory(completed, returned, byProduct, orderValues);
+		collectHistory(completed, byProduct, orderValues);
 		final Set<String> openProductCodes = openEntries.stream()
 				.filter(e -> e.getProduct() != null && e.getQuantity() != null && e.getQuantity() > 0)
 				.map(e -> e.getProduct().getCode()).collect(Collectors.toSet());
@@ -114,10 +117,10 @@ public class DefaultOptimizerService implements OptimizerService
 		final double totalSpend = orderValues.values().stream().mapToDouble(Double::doubleValue).sum();
 
 		// 2. Candidates
-		final List<SuggestionCandidate> candidates = new ArrayList<>();
+		final List<SuggestionCandidateData> candidates = new ArrayList<>();
 		for (final Map.Entry<String, List<Purchase>> e : byProduct.entrySet())
 		{
-			final SuggestionCandidate c = buildPatternCandidate(e.getKey(), e.getValue(), now, totalSpend,
+			final SuggestionCandidateData c = buildPatternCandidate(e.getKey(), e.getValue(), now, totalSpend,
 					openProductCodes);
 			if (c != null)
 			{
@@ -130,22 +133,22 @@ public class DefaultOptimizerService implements OptimizerService
 		}
 
 		// 3. Rank and number them
-		candidates.sort(Comparator.comparingDouble(SuggestionCandidate::getRelevance).reversed()
-				.thenComparing(SuggestionCandidate::getProductCode));
+		candidates.sort(Comparator.comparingDouble(SuggestionCandidateData::getRelevance).reversed()
+				.thenComparing(SuggestionCandidateData::getProductCode));
 
 		// 4. Automatic order-size profile
 		applyOrderSizeProfile(result, orderValues.values().stream().mapToDouble(Double::doubleValue).toArray(), requestedTier);
 
 		// 5. Optimizer
 		final int maxLines = result.getOrderSizeValue() == null ? intProp("max.lines.exploratory", 10) : intProp("max.lines", 25);
-		final List<SuggestionCandidate> shortlist = new ArrayList<>(candidates.subList(0, Math.min(candidates.size(), maxLines)));
+		final List<SuggestionCandidateData> shortlist = new ArrayList<>(candidates.subList(0, Math.min(candidates.size(), maxLines)));
 		for (int i = 0; i < shortlist.size(); i++)
 		{
 			shortlist.get(i).setCandidateId(String.format(Locale.ROOT, "cand_%02d", i + 1));
 		}
 		final int candidateCount = candidates.size();
-		final List<SuggestionCandidate> selected = optimize(shortlist, result);
-		result.getLines().addAll(selected);
+		final List<SuggestionCandidateData> selected = optimize(shortlist, result);
+		result.setLines(selected);
 
 		// 6. Explanations
 		applyTemplates(selected);
@@ -158,7 +161,7 @@ public class DefaultOptimizerService implements OptimizerService
 
 	// ------------------------------------------------------------------------------------------------ history
 
-	private void collectHistory(final List<OrderEntryModel> completed, final Map<OrderEntryModel, Long> returned,
+	private void collectHistory(final List<OrderEntryModel> completed,
 			final Map<String, List<Purchase>> byProduct, final Map<String, Double> orderValues)
 	{
 		final Map<String, Purchase> perOrderProduct = new LinkedHashMap<>();
@@ -169,13 +172,8 @@ public class DefaultOptimizerService implements OptimizerService
 			{
 				continue; // free-of-charge scheme goods are not dealer-initiated purchases
 			}
-			final long ret = returned.getOrDefault(entry, 0L);
-			final double net = entry.getQuantity() - ret;
-			if (net <= 0d)
-			{
-				continue; // fully returned
-			}
-			final double value = entry.getTotalPrice() == null ? 0d : entry.getTotalPrice() * net / entry.getQuantity();
+			final double net = entry.getQuantity();
+			final double value = entry.getTotalPrice() == null ? 0d : entry.getTotalPrice();
 			final String orderCode = entry.getOrder().getCode();
 			orderValues.merge(orderCode, value, Double::sum);
 
@@ -205,7 +203,7 @@ public class DefaultOptimizerService implements OptimizerService
 
 	// ------------------------------------------------------------------------------------------------ candidates
 
-	private SuggestionCandidate buildPatternCandidate(final String code, final List<Purchase> purchases, final Date now,
+	private SuggestionCandidateData buildPatternCandidate(final String code, final List<Purchase> purchases, final Date now,
 			final double totalSpend, final Set<String> openProductCodes)
 	{
 		final int n = purchases.size();
@@ -218,14 +216,14 @@ public class DefaultOptimizerService implements OptimizerService
 		{
 			return null;
 		}
-		final double medianInterval = PurchaseStatistics.median(intervals);
-		final double cv = PurchaseStatistics.coefficientOfVariation(intervals);
+		final double medianInterval = calc.median(intervals);
+		final double cv = calc.coefficientOfVariation(intervals);
 		final Date last = purchases.get(n - 1).date;
 		final double daysSince = (now.getTime() - last.getTime()) / MS_PER_DAY;
-		final double ratio = SuggestionMath.dueRatio(daysSince, medianInterval);
+		final double ratio = calc.dueRatio(daysSince, medianInterval);
 		final double dueMin = dbl("due.min", 0.85d);
 		final double dueMax = dbl("due.max", 1.30d);
-		final double due = SuggestionMath.dueScore(ratio, dueMin, dueMax, dbl("due.drop.above", 5.0d));
+		final double due = calc.dueScore(ratio, dueMin, dueMax, dbl("due.drop.above", 5.0d));
 		if (due <= 0d)
 		{
 			return null;
@@ -238,13 +236,13 @@ public class DefaultOptimizerService implements OptimizerService
 		}
 
 		// quantity
-		final double[] qtys = PurchaseStatistics.winsoriseUpper(purchases.stream().mapToDouble(p -> p.qty * p.weightFor(dbl("scheme.weight", 0.5d))).toArray());
-		final double base = SuggestionMath.baseQuantity(PurchaseStatistics.median(qtys), PurchaseStatistics.ewma(qtys, 3d),
+		final double[] qtys = calc.winsoriseUpper(purchases.stream().mapToDouble(p -> p.qty * p.weightFor(dbl("scheme.weight", 0.5d))).toArray());
+		final double base = calc.baseQuantity(calc.median(qtys), calc.ewma(qtys, 3d),
 				dbl("qty.median.weight", 0.6d), dbl("qty.ewma.weight", 0.4d));
-		final double trend = SuggestionMath.trendFactor(PurchaseStatistics.theilSenSlope(qtys), n, base,
+		final double trend = calc.trendFactor(calc.theilSenSlope(qtys), n, base,
 				dbl("qty.trend.min", 0.85d), dbl("qty.trend.max", 1.15d));
-		final double cap = dbl("qty.p90.cap.factor", 1.25d) * PurchaseStatistics.percentile(qtys, 0.9d);
-		final long qty = SuggestionMath.roundQuantity(base * trend, ep.step, ep.minQty, cap, ep.maxQty);
+		final double cap = dbl("qty.p90.cap.factor", 1.25d) * calc.percentile(qtys, 0.9d);
+		final long qty = calc.roundQuantity(base * trend, ep.step, ep.minQty, cap, ep.maxQty);
 		if (qty <= 0L)
 		{
 			return null;
@@ -253,11 +251,11 @@ public class DefaultOptimizerService implements OptimizerService
 		// scoring
 		final double spend = purchases.stream().mapToDouble(p -> p.value).sum();
 		final double mixScore = totalSpend <= 0d ? 0d : Math.min(1d, spend / totalSpend * 10d);
-		final double recency = SuggestionMath.recencyScore(daysSince);
-		final double relevance = SuggestionMath.relevance(due, mixScore, 0d, recency, dbl("score.due", 0.45d),
+		final double recency = calc.recencyScore(daysSince);
+		final double relevance = calc.relevance(due, mixScore, 0d, recency, dbl("score.due", 0.45d),
 				dbl("score.mix", 0.20d), dbl("score.affinity", 0.20d), dbl("score.recency", 0.15d));
 
-		final SuggestionCandidate c = new SuggestionCandidate();
+		final SuggestionCandidateData c = newCandidate();
 		c.setProductCode(code);
 		c.setGroup(CandidateGroup.PATTERN);
 		c.setOrderCount12m(n);
@@ -269,16 +267,16 @@ public class DefaultOptimizerService implements OptimizerService
 		c.setMinQuantity(Math.max(ep.minQty, ep.step));
 		c.setUnitPrice(ep.unitPrice);
 		c.setRelevance(relevance);
-		c.setConfidenceTier(SuggestionMath.confidenceTier(n, cv, daysSince, medianInterval));
-		c.setEvidenceScore(SuggestionMath.evidenceScore(n, recency, cv, 1.0d));
+		c.setConfidenceTier(calc.confidenceTier(n, cv, daysSince, medianInterval));
+		c.setEvidenceScore(calc.evidenceScore(n, recency, cv, 1.0d));
 		c.getEvidenceLabels().add("Observed: " + n + " orders in the last 12 months; last ordered " + c.getDaysSinceLastOrder()
 				+ " days ago");
 		c.getEvidenceLabels().add("Inferred: typical reorder period about " + c.getMedianIntervalDays() + " days");
 		return c;
 	}
 
-	private List<SuggestionCandidate> buildAffinityCandidates(final Map<String, List<Purchase>> byProduct,
-			final List<SuggestionCandidate> existing, final Set<String> openProductCodes)
+	private List<SuggestionCandidateData> buildAffinityCandidates(final Map<String, List<Purchase>> byProduct,
+			final List<SuggestionCandidateData> existing, final Set<String> openProductCodes)
 	{
 		final int minSourceOrders = intProp("affinity.min.source.orders", 3);
 		final int maxLines = intProp("affinity.max.lines", 3);
@@ -312,7 +310,7 @@ public class DefaultOptimizerService implements OptimizerService
 				}
 			}
 		}
-		final List<SuggestionCandidate> out = new ArrayList<>();
+		final List<SuggestionCandidateData> out = new ArrayList<>();
 		for (final String tcode : targets.keySet())
 		{
 			if (out.size() >= maxLines)
@@ -324,7 +322,7 @@ public class DefaultOptimizerService implements OptimizerService
 			{
 				continue;
 			}
-			final SuggestionCandidate c = new SuggestionCandidate();
+			final SuggestionCandidateData c = newCandidate();
 			c.setProductCode(tcode);
 			c.setGroup(CandidateGroup.AFFINITY);
 			c.setConfidenceTier(ConfidenceTier.EXPLORATORY);
@@ -335,11 +333,21 @@ public class DefaultOptimizerService implements OptimizerService
 			c.setMinQuantity(q);
 			c.setUnitPrice(ep.unitPrice);
 			c.setRelevance(dbl("score.affinity", 0.20d));
-			c.setEvidenceScore(SuggestionMath.evidenceScore(0, 0d, 1d, 0.6d));
+			c.setEvidenceScore(calc.evidenceScore(0, 0d, 1d, 0.6d));
 			c.getEvidenceLabels().add("Inferred: linked in the catalogue to a product you order regularly");
 			out.add(c);
 		}
 		return out;
+	}
+
+	private SuggestionCandidateData newCandidate()
+	{
+		final SuggestionCandidateData c = new SuggestionCandidateData();
+		c.setPackSize(1L);
+		c.setMinQuantity(1L);
+		c.setExplanationSource("TEMPLATE");
+		c.setEvidenceLabels(new ArrayList<>());
+		return c;
 	}
 
 	// ------------------------------------------------------------------------------------------------ eligibility
@@ -413,7 +421,7 @@ public class DefaultOptimizerService implements OptimizerService
 
 	// ------------------------------------------------------------------------------------------------ order-size profile
 
-	private void applyOrderSizeProfile(final OptimizerResult result, final double[] orderValues, final BudgetTier requested)
+	private void applyOrderSizeProfile(final OptimizerResultData result, final double[] orderValues, final BudgetTier requested)
 	{
 		final int minOrders = intProp("budget.min.orders", 3);
 		if (orderValues.length < minOrders)
@@ -423,12 +431,12 @@ public class DefaultOptimizerService implements OptimizerService
 			result.setAppliedTier(BudgetTier.USUAL);
 			return;
 		}
-		final double usual = PurchaseStatistics.median(PurchaseStatistics.winsoriseUpper(orderValues));
+		final double usual = calc.median(calc.winsoriseUpper(orderValues));
 		Double high = null;
 		if (orderValues.length >= intProp("budget.high.min.orders", 8))
 		{
 			final int k = Math.max(4, Math.min(5, intProp("budget.high.k", 4)));
-			high = PurchaseStatistics.kthHighest(orderValues, k);
+			high = calc.kthHighest(orderValues, k);
 		}
 		result.setProfileSource("OWN_HISTORY");
 		if (BudgetTier.HIGH.equals(requested) && high != null && high >= usual)
@@ -443,30 +451,29 @@ public class DefaultOptimizerService implements OptimizerService
 		}
 	}
 
-	private List<SuggestionCandidate> optimize(final List<SuggestionCandidate> shortlist, final OptimizerResult result)
+	private List<SuggestionCandidateData> optimize(final List<SuggestionCandidateData> shortlist, final OptimizerResultData result)
 	{
-		final double diminishing = dbl("diminishing.factor", 0.8d);
-		final List<BasketOptimizer.Item> items = new ArrayList<>();
-		final Map<String, SuggestionCandidate> byId = new HashMap<>();
-		for (final SuggestionCandidate c : shortlist)
+		final Map<String, Long> packs = calc.selectWithinBudget(shortlist, result.getOrderSizeValue(),
+				dbl("budget.granularity", 100d), dbl("diminishing.factor", 0.8d));
+		if (shortlist.isEmpty())
 		{
-			final long step = Math.max(1L, c.getPackSize());
-			final long maxPacks = Math.max(1L, c.getSuggestedQuantity() / step);
-			final long minPacks = Math.max(1L, (long) Math.ceil((double) c.getMinQuantity() / step));
-			items.add(new BasketOptimizer.Item(c.getCandidateId(), c.getUnitPrice() * step, minPacks, maxPacks,
-					Math.max(c.getRelevance(), 0.0001d), diminishing));
-			byId.put(c.getCandidateId(), c);
+			result.setReasonCode("NO_ITEMS");
 		}
-		final BasketOptimizer.Result r = BasketOptimizer.optimize(items, result.getOrderSizeValue(),
-				dbl("budget.granularity", 100d));
-		result.setReasonCode(r.getReasonCode());
-		final List<SuggestionCandidate> out = new ArrayList<>();
-		for (final SuggestionCandidate c : shortlist) // keep relevance order
+		else if (result.getOrderSizeValue() == null)
 		{
-			final Long packs = r.getPacksById().get(c.getCandidateId());
-			if (packs != null && packs > 0)
+			result.setReasonCode("NO_BUDGET_LIMIT");
+		}
+		else
+		{
+			result.setReasonCode(packs.isEmpty() ? "ORDER_SIZE_TOO_LOW" : "OK");
+		}
+		final List<SuggestionCandidateData> out = new ArrayList<>();
+		for (final SuggestionCandidateData c : shortlist) // keep relevance order
+		{
+			final Long n = packs.get(c.getCandidateId());
+			if (n != null && n > 0)
 			{
-				c.setSuggestedQuantity(packs * Math.max(1L, c.getPackSize()));
+				c.setSuggestedQuantity(n * Math.max(1L, c.getPackSize()));
 				out.add(c);
 			}
 		}
@@ -475,16 +482,16 @@ public class DefaultOptimizerService implements OptimizerService
 
 	// ------------------------------------------------------------------------------------------------ explanations
 
-	private void applyTemplates(final List<SuggestionCandidate> lines)
+	private void applyTemplates(final List<SuggestionCandidateData> lines)
 	{
-		for (final SuggestionCandidate c : lines)
+		for (final SuggestionCandidateData c : lines)
 		{
 			c.setExplanation(templateFor(c));
 			c.setExplanationSource("TEMPLATE");
 		}
 	}
 
-	static String templateFor(final SuggestionCandidate c)
+	static String templateFor(final SuggestionCandidateData c)
 	{
 		final String lead = "Based on your previous ordering pattern, you may want to review this product for your next purchase. ";
 		if (CandidateGroup.AFFINITY.equals(c.getGroup()))
@@ -501,7 +508,7 @@ public class DefaultOptimizerService implements OptimizerService
 				+ " Suggested quantity " + c.getSuggestedQuantity() + " is consistent with your previous orders.";
 	}
 
-	private void applyAiExplanations(final List<SuggestionCandidate> lines, final B2BUnitModel unit, final OptimizerResult result)
+	private void applyAiExplanations(final List<SuggestionCandidateData> lines, final B2BUnitModel unit, final OptimizerResultData result)
 	{
 		if (lines.isEmpty() || !configurationService.getConfiguration().getBoolean(P + "ai.enabled", false)
 				|| !openAiClient.isConfigured())
@@ -512,7 +519,7 @@ public class DefaultOptimizerService implements OptimizerService
 		{
 			final List<Map<String, Object>> payload = new ArrayList<>();
 			final Map<String, Set<String>> allowedNumbers = new LinkedHashMap<>();
-			for (final SuggestionCandidate c : lines)
+			for (final SuggestionCandidateData c : lines)
 			{
 				final Map<String, Object> m = new LinkedHashMap<>();
 				m.put("id", c.getCandidateId());
@@ -539,17 +546,17 @@ public class DefaultOptimizerService implements OptimizerService
 				result.setFallbackUsed(true);
 				return;
 			}
-			final AiResponseValidator.Result v = aiResponseValidator.validate(raw, allowedNumbers,
+			final Map<String, String> accepted = aiResponseValidator.validate(raw, allowedNumbers,
 					intProp("ai.explanation.maxlength", 240));
-			if (!v.isSchemaValid())
+			if (accepted == null)
 			{
 				result.setFallbackUsed(true);
-				LOG.warn("AI response rejected: {}", v.getFailureReason());
+				LOG.warn("AI response rejected by validator");
 				return;
 			}
-			for (final SuggestionCandidate c : lines)
+			for (final SuggestionCandidateData c : lines)
 			{
-				final String text = v.getAccepted().get(c.getCandidateId());
+				final String text = accepted.get(c.getCandidateId());
 				if (text != null)
 				{
 					c.setExplanation(text);
@@ -603,7 +610,7 @@ public class DefaultOptimizerService implements OptimizerService
 
 	// ------------------------------------------------------------------------------------------------ audit
 
-	private void writeAudit(final B2BCustomerModel customer, final B2BUnitModel unit, final OptimizerResult result,
+	private void writeAudit(final B2BCustomerModel customer, final B2BUnitModel unit, final OptimizerResultData result,
 			final int candidateCount)
 	{
 		try
@@ -622,7 +629,7 @@ public class DefaultOptimizerService implements OptimizerService
 			audit.setFallbackUsed(result.isFallbackUsed());
 			audit.setReasonCode(result.getReasonCode());
 			final List<Map<String, Object>> sel = new ArrayList<>();
-			for (final SuggestionCandidate c : result.getLines())
+			for (final SuggestionCandidateData c : result.getLines())
 			{
 				final Map<String, Object> m = new LinkedHashMap<>();
 				m.put("candidateId", c.getCandidateId());
@@ -674,7 +681,7 @@ public class DefaultOptimizerService implements OptimizerService
 		return configurationService.getConfiguration().getDouble(P + key, def);
 	}
 
-	/** One product purchased on one order (net of returns). */
+	/** One product purchased on one order . */
 	private static final class Purchase
 	{
 		final Date date;

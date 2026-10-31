@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extensioninfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="extensioninfo.xsd">
+
+	<extension abstractclassprefix="Purchaseoptimizerocc"
+	           classprefix="Purchaseoptimizerocc"
+	           name="purchaseoptimizerocc">
+
+		<requires-extension name="purchaseoptimizer"/>
+		<requires-extension name="commercewebservices"/>
+
+		<!-- generated="false": only used so purchaseoptimizerocc-beans.xml (WsDTO extension) is generated -->
+		<coremodule generated="false" packageroot="com.purchaseoptimizer.occ"/>
+
+		<webmodule jspcompile="false" webroot="/purchaseoptimizerocc"/>
+
+	</extension>
+</extensioninfo>

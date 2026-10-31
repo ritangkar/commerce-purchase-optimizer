@@ -1,13 +1,64 @@
 <?xml version="1.0" encoding="ISO-8859-1"?>
 <!--
-	Facade-layer DTO extension. Re-declaring an OOTB bean class merges the properties into it.
-	NOTE: if your platform version only picks up "<extensionname>-beans.xml", rename this file
-	to purchaseoptimizer-beans.xml and paste the occ bean block below into the same file.
+	All data objects are generated from this file (no hand-written DTO classes).
+	NOTE: if your platform version only picks up "<extensionname>-beans.xml", rename this file to
+	purchaseoptimizer-beans.xml and merge purchaseoptimizer-occ-beans.xml's block into the OCC extension's beans file.
 -->
 <beans xmlns="http://www.springframework.org/schema/beans"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        xsi:noNamespaceSchemaLocation="beans.xsd">
 
+	<enum class="com.purchaseoptimizer.enums.BudgetTier">
+		<description>Order-size tier derived from the dealer's own history. The client never supplies an amount.</description>
+		<value>USUAL</value>
+		<value>HIGH</value>
+	</enum>
+
+	<enum class="com.purchaseoptimizer.enums.ConfidenceTier">
+		<value>HIGH</value>
+		<value>MEDIUM</value>
+		<value>EXPLORATORY</value>
+	</enum>
+
+	<enum class="com.purchaseoptimizer.enums.CandidateGroup">
+		<description>PATTERN: repeat-ordered product. AFFINITY: catalogue-linked product not ordered in the window.</description>
+		<value>PATTERN</value>
+		<value>AFFINITY</value>
+	</enum>
+
+	<!-- One suggested line produced by the deterministic engine (internal, not exposed over OCC as-is). -->
+	<bean class="com.purchaseoptimizer.data.SuggestionCandidateData">
+		<property name="candidateId" type="java.lang.String"/>
+		<property name="productCode" type="java.lang.String"/>
+		<property name="group" type="com.purchaseoptimizer.enums.CandidateGroup"/>
+		<property name="confidenceTier" type="com.purchaseoptimizer.enums.ConfidenceTier"/>
+		<property name="orderCount12m" type="int"/>
+		<property name="daysSinceLastOrder" type="long"/>
+		<property name="medianIntervalDays" type="long"/>
+		<property name="dueState" type="java.lang.String"/>
+		<property name="suggestedQuantity" type="long"/>
+		<property name="packSize" type="long"/>
+		<property name="minQuantity" type="long"/>
+		<property name="unitPrice" type="double"/>
+		<property name="relevance" type="double"/>
+		<property name="evidenceScore" type="double"/>
+		<property name="explanation" type="java.lang.String"/>
+		<property name="explanationSource" type="java.lang.String"/>
+		<property name="evidenceLabels" type="java.util.List&lt;java.lang.String&gt;"/>
+	</bean>
+
+	<bean class="com.purchaseoptimizer.data.OptimizerResultData">
+		<property name="lines" type="java.util.List&lt;com.purchaseoptimizer.data.SuggestionCandidateData&gt;"/>
+		<property name="appliedTier" type="com.purchaseoptimizer.enums.BudgetTier"/>
+		<property name="profileSource" type="java.lang.String"/>
+		<property name="orderSizeValue" type="java.lang.Double"/>
+		<property name="aiUsed" type="boolean"/>
+		<property name="fallbackUsed" type="boolean"/>
+		<property name="reasonCode" type="java.lang.String"/>
+		<property name="auditId" type="java.lang.String"/>
+	</bean>
+
+	<!-- Extension of the OOTB ProductData returned by the facade. -->
 	<bean class="de.hybris.platform.commercefacades.product.data.ProductData">
 		<property name="suggestedQuantity" type="java.lang.Long"/>
 		<property name="suggestionReason" type="java.lang.String"/>

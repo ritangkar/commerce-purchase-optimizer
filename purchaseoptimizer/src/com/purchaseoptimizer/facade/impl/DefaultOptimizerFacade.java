@@ -23,9 +23,9 @@ import com.purchaseoptimizer.constants.PurchaseoptimizerConstants;
 import com.purchaseoptimizer.enums.BudgetTier;
 import com.purchaseoptimizer.exception.OptimizerException;
 import com.purchaseoptimizer.facade.OptimizerFacade;
-import com.purchaseoptimizer.service.OptimizerResult;
+import com.purchaseoptimizer.data.OptimizerResultData;
+import com.purchaseoptimizer.data.SuggestionCandidateData;
 import com.purchaseoptimizer.service.OptimizerService;
-import com.purchaseoptimizer.service.SuggestionCandidate;
 
 
 public class DefaultOptimizerFacade implements OptimizerFacade
@@ -60,20 +60,12 @@ public class DefaultOptimizerFacade implements OptimizerFacade
 			throw new OptimizerException(OptimizerException.Reason.NO_B2B_UNIT, "Customer is not assigned to a B2B unit");
 		}
 
-		final BudgetTier tier;
-		try
-		{
-			tier = BudgetTier.fromString(budgetTier);
-		}
-		catch (final IllegalArgumentException e)
-		{
-			throw new OptimizerException(OptimizerException.Reason.BAD_REQUEST, "Unsupported budgetTier");
-		}
+		final BudgetTier tier = parseTier(budgetTier);
 
-		final OptimizerResult result = optimizerService.generateSuggestedCart(customer, unit, tier);
+		final OptimizerResultData result = optimizerService.generateSuggestedCart(customer, unit, tier);
 
 		final List<ProductData> out = new ArrayList<>();
-		for (final SuggestionCandidate c : result.getLines())
+		for (final SuggestionCandidateData c : result.getLines())
 		{
 			try
 			{
@@ -94,6 +86,22 @@ public class DefaultOptimizerFacade implements OptimizerFacade
 		LOG.info("Suggested cart built: {} lines, aiUsed={}, fallbackUsed={}", out.size(),
 				result.isAiUsed(), result.isFallbackUsed());
 		return out;
+	}
+
+	private BudgetTier parseTier(final String value)
+	{
+		if (value == null || value.trim().isEmpty())
+		{
+			return BudgetTier.USUAL;
+		}
+		for (final BudgetTier tier : BudgetTier.values())
+		{
+			if (tier.name().equalsIgnoreCase(value.trim()))
+			{
+				return tier;
+			}
+		}
+		throw new OptimizerException(OptimizerException.Reason.BAD_REQUEST, "Unsupported budgetTier");
 	}
 
 	/** The path user must be the authenticated B2B customer: dealer isolation is enforced here, not by the client. */

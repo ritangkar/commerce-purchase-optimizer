@@ -10,6 +10,8 @@
 
 	<bean id="optimizerOrderHistoryDao" class="com.purchaseoptimizer.dao.impl.DefaultOptimizerOrderHistoryDao"/>
 
+	<bean id="optimizerCalculationService" class="com.purchaseoptimizer.service.impl.DefaultOptimizerCalculationService"/>
+
 	<bean id="optimizerAiResponseValidator" class="com.purchaseoptimizer.service.ai.AiResponseValidator"/>
 
 	<bean id="optimizerOpenAiClient" class="com.purchaseoptimizer.service.ai.OpenAiClient"/>

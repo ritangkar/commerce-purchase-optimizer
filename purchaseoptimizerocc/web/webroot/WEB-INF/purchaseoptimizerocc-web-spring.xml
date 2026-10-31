@@ -8,8 +8,8 @@
            http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc.xsd">
 
 	<context:annotation-config/>
-	<context:component-scan base-package="com.purchaseoptimizer.controller"/>
+	<context:component-scan base-package="com.purchaseoptimizer.occ.controller"/>
 	<mvc:annotation-driven/>
-	<!-- If you move the controller into an existing OCC extension, copy only the component-scan line there. -->
+	<!-- If you move the controller into your own OCC extension, copy only the component-scan line there. -->
 
 </beans>
