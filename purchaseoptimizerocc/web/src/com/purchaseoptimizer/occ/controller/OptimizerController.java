@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -49,9 +50,9 @@ public class OptimizerController
 	@ResponseBody
 	public ProductListWsDTO getSuggestedCart(@PathVariable final String userId,
 			@RequestParam(required = false, defaultValue = "USUAL") final String budgetTier,
-			@RequestParam(required = false, defaultValue = DEFAULT_FIELDS) final String fields)
+			@RequestParam(required = false, defaultValue = DEFAULT_FIELDS) final String fields, final HttpServletRequest request)
 	{
-		final List<ProductData> data = optimizerFacade.getSuggestedCart(userId, budgetTier);
+		final List<ProductData> data = optimizerFacade.getSuggestedCart(userId, budgetTier, request.getParameterMap().keySet());
 		final List<ProductWsDTO> products = dataMapper.mapAsList(data, ProductWsDTO.class, fields);
 		final ProductListWsDTO dto = new ProductListWsDTO();
 		dto.setProducts(products);

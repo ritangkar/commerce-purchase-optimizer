@@ -12,6 +12,41 @@
 
 	<bean id="optimizerCalculationService" class="com.purchaseoptimizer.service.impl.DefaultOptimizerCalculationService"/>
 
+	<bean id="optimizerStrategyDao" class="com.purchaseoptimizer.dao.impl.DefaultOptimizerStrategyDao"/>
+
+	<bean id="optimizerConfigService" class="com.purchaseoptimizer.service.impl.DefaultOptimizerConfigService"/>
+
+	<bean id="optimizerEligibilityService" class="com.purchaseoptimizer.service.impl.DefaultOptimizerEligibilityService"/>
+
+	<bean id="optimizerStrategyService" class="com.purchaseoptimizer.service.impl.DefaultOptimizerStrategyService"/>
+
+	<!-- ===== governance: interceptors and lifecycle job ===== -->
+	<bean id="recoCampaignPrepareInterceptor" class="com.purchaseoptimizer.interceptor.RecoCampaignPrepareInterceptor"/>
+	<bean id="recoCampaignPrepareInterceptorMapping" class="de.hybris.platform.servicelayer.interceptor.impl.InterceptorMapping">
+		<property name="interceptor" ref="recoCampaignPrepareInterceptor"/>
+		<property name="typeCode" value="RecoCampaign"/>
+	</bean>
+
+	<bean id="recoCampaignValidateInterceptor" class="com.purchaseoptimizer.interceptor.RecoCampaignValidateInterceptor"/>
+	<bean id="recoCampaignValidateInterceptorMapping" class="de.hybris.platform.servicelayer.interceptor.impl.InterceptorMapping">
+		<property name="interceptor" ref="recoCampaignValidateInterceptor"/>
+		<property name="typeCode" value="RecoCampaign"/>
+	</bean>
+
+	<bean id="strategicPriorityValidateInterceptor" class="com.purchaseoptimizer.interceptor.StrategicPriorityValidateInterceptor"/>
+	<bean id="strategicPriorityValidateInterceptorMapping" class="de.hybris.platform.servicelayer.interceptor.impl.InterceptorMapping">
+		<property name="interceptor" ref="strategicPriorityValidateInterceptor"/>
+		<property name="typeCode" value="StrategicPriority"/>
+	</bean>
+
+	<bean id="recoBundleValidateInterceptor" class="com.purchaseoptimizer.interceptor.RecoBundleValidateInterceptor"/>
+	<bean id="recoBundleValidateInterceptorMapping" class="de.hybris.platform.servicelayer.interceptor.impl.InterceptorMapping">
+		<property name="interceptor" ref="recoBundleValidateInterceptor"/>
+		<property name="typeCode" value="RecoBundle"/>
+	</bean>
+
+	<bean id="campaignLifecycleJob" class="com.purchaseoptimizer.job.CampaignLifecycleJob" parent="abstractJobPerformable"/>
+
 	<bean id="optimizerAiResponseValidator" class="com.purchaseoptimizer.service.ai.AiResponseValidator"/>
 
 	<bean id="optimizerOpenAiClient" class="com.purchaseoptimizer.service.ai.OpenAiClient"/>

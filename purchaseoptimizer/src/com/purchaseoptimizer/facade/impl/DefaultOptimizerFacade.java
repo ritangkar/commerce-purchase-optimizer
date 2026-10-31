@@ -12,7 +12,10 @@ import de.hybris.platform.servicelayer.user.UserService;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import javax.annotation.Resource;
 
@@ -46,8 +49,10 @@ public class DefaultOptimizerFacade implements OptimizerFacade
 	private ConfigurationService configurationService;
 
 	@Override
-	public List<ProductData> getSuggestedCart(final String userId, final String budgetTier)
+	public List<ProductData> getSuggestedCart(final String userId, final String budgetTier,
+			final Collection<String> requestParameterNames)
 	{
+		rejectUnsupportedParameters(requestParameterNames);
 		if (!configurationService.getConfiguration().getBoolean(PurchaseoptimizerConstants.ENABLED, true))
 		{
 			throw new OptimizerException(OptimizerException.Reason.DISABLED, "Feature is not available");
@@ -86,6 +91,24 @@ public class DefaultOptimizerFacade implements OptimizerFacade
 		LOG.info("Suggested cart built: {} lines, aiUsed={}, fallbackUsed={}", out.size(),
 				result.isAiUsed(), result.isFallbackUsed());
 		return out;
+	}
+
+	private static final Set<String> ALLOWED_PARAMETERS = new HashSet<>(Arrays.asList("budgetTier", "fields", "lang", "curr"));
+
+	private void rejectUnsupportedParameters(final Collection<String> names)
+	{
+		if (names == null)
+		{
+			return;
+		}
+		for (final String name : names)
+		{
+			if (!ALLOWED_PARAMETERS.contains(name))
+			{
+				// covers budget/amount/boost/campaign style inputs: the server derives all of these itself (lang/curr are OCC standard)
+				throw new OptimizerException(OptimizerException.Reason.BAD_REQUEST, "Unsupported parameter");
+			}
+		}
 	}
 
 	private BudgetTier parseTier(final String value)

@@ -21,9 +21,11 @@
 	</enum>
 
 	<enum class="com.purchaseoptimizer.enums.CandidateGroup">
-		<description>PATTERN: repeat-ordered product. AFFINITY: catalogue-linked product not ordered in the window.</description>
+		<description>PATTERN: repeat-ordered product. AFFINITY: catalogue-linked. STRATEGIC: business-priority product. BUNDLE_CAMPAIGN: campaign bundle line.</description>
 		<value>PATTERN</value>
 		<value>AFFINITY</value>
+		<value>STRATEGIC</value>
+		<value>BUNDLE_CAMPAIGN</value>
 	</enum>
 
 	<!-- One suggested line produced by the deterministic engine (internal, not exposed over OCC as-is). -->
@@ -45,9 +47,14 @@
 		<property name="explanation" type="java.lang.String"/>
 		<property name="explanationSource" type="java.lang.String"/>
 		<property name="evidenceLabels" type="java.util.List&lt;java.lang.String&gt;"/>
+		<property name="strategicCode" type="java.lang.String"/>
+		<property name="bundleCode" type="java.lang.String"/>
+		<property name="boostApplied" type="double"/>
 	</bean>
 
 	<bean class="com.purchaseoptimizer.data.OptimizerResultData">
+		<property name="strategyTrace" type="java.util.List&lt;com.purchaseoptimizer.data.StrategyTraceData&gt;"/>
+		<property name="holdoutKeyId" type="java.lang.String"/>
 		<property name="lines" type="java.util.List&lt;com.purchaseoptimizer.data.SuggestionCandidateData&gt;"/>
 		<property name="appliedTier" type="com.purchaseoptimizer.enums.BudgetTier"/>
 		<property name="profileSource" type="java.lang.String"/>
@@ -56,6 +63,47 @@
 		<property name="fallbackUsed" type="boolean"/>
 		<property name="reasonCode" type="java.lang.String"/>
 		<property name="auditId" type="java.lang.String"/>
+	</bean>
+
+	<!-- What the engine did with one campaign / priority / bundle for this dealer (written to the audit). -->
+	<bean class="com.purchaseoptimizer.data.StrategyTraceData">
+		<property name="campaignCode" type="java.lang.String"/>
+		<property name="priorityCode" type="java.lang.String"/>
+		<property name="bundleCode" type="java.lang.String"/>
+		<property name="boost" type="double"/>
+		<property name="holdout" type="boolean"/>
+		<property name="outcome" type="java.lang.String"/>
+	</bean>
+
+	<!-- Effective tuning (active OptimizerConfig, falling back to project.properties). -->
+	<bean class="com.purchaseoptimizer.data.OptimizerConfigData">
+		<property name="version" type="int"/>
+		<property name="boostCap" type="double"/>
+		<property name="strategicLineShareCap" type="double"/>
+		<property name="strategicValueShareCap" type="double"/>
+		<property name="gateMinCategoryOrders" type="int"/>
+		<property name="minOrders" type="int"/>
+		<property name="dueMin" type="double"/>
+		<property name="dueMax" type="double"/>
+	</bean>
+
+	<!-- Dealer facts used for targeting. No names or contacts. -->
+	<bean class="com.purchaseoptimizer.data.DealerProfileData">
+		<property name="unitUid" type="java.lang.String"/>
+		<property name="region" type="java.lang.String"/>
+		<property name="orderCount12m" type="int"/>
+		<property name="usualOrderValue" type="java.lang.Double"/>
+		<property name="segmentCodes" type="java.util.List&lt;java.lang.String&gt;"/>
+	</bean>
+
+	<!-- Pack/MOQ/price facts of an eligible product (price is internal only). -->
+	<bean class="com.purchaseoptimizer.data.EligibilityData">
+		<property name="productCode" type="java.lang.String"/>
+		<property name="step" type="long"/>
+		<property name="minQty" type="long"/>
+		<property name="maxQty" type="long"/>
+		<property name="unitPrice" type="double"/>
+		<property name="categoryCodes" type="java.util.List&lt;java.lang.String&gt;"/>
 	</bean>
 
 	<!-- Extension of the OOTB ProductData returned by the facade. -->

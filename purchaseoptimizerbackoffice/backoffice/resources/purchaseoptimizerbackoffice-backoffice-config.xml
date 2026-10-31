@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	Backoffice (cockpitng) configuration so business users manage campaigns, priorities, bundles, segments and tuning
+	without developers. Status moves follow DRAFT -> IN_REVIEW -> APPROVED (checker) -> ACTIVE/EXPIRED (job).
+-->
+<config xmlns="http://www.hybris.com/cockpit/config"
+        xmlns:editorArea="http://www.hybris.com/cockpitng/component/editorArea"
+        xmlns:list-view="http://www.hybris.com/cockpitng/component/listView">
+
+	<!-- ================= RecoCampaign ================= -->
+	<context merge-by="type" parent="GenericItem" type="RecoCampaign" component="editor-area">
+		<editorArea:editorArea>
+			<editorArea:tab name="tab.optimizer.general">
+				<editorArea:section name="section.optimizer.general">
+					<editorArea:attribute qualifier="code"/>
+					<editorArea:attribute qualifier="name"/>
+					<editorArea:attribute qualifier="status"/>
+					<editorArea:attribute qualifier="validFrom"/>
+					<editorArea:attribute qualifier="validTo"/>
+					<editorArea:attribute qualifier="holdoutPercent"/>
+				</editorArea:section>
+			</editorArea:tab>
+			<editorArea:tab name="tab.optimizer.targeting">
+				<editorArea:section name="section.optimizer.targeting">
+					<editorArea:attribute qualifier="segments"/>
+					<editorArea:attribute qualifier="regions"/>
+				</editorArea:section>
+			</editorArea:tab>
+			<editorArea:tab name="tab.optimizer.content">
+				<editorArea:section name="section.optimizer.content">
+					<editorArea:attribute qualifier="priorities"/>
+					<editorArea:attribute qualifier="bundles"/>
+				</editorArea:section>
+			</editorArea:tab>
+			<editorArea:tab name="tab.optimizer.governance">
+				<editorArea:section name="section.optimizer.governance">
+					<editorArea:attribute qualifier="createdBy" readonly="true"/>
+					<editorArea:attribute qualifier="approvedBy" readonly="true"/>
+				</editorArea:section>
+			</editorArea:tab>
+		</editorArea:editorArea>
+	</context>
+	<context merge-by="type" parent="GenericItem" type="RecoCampaign" component="listview">
+		<list-view:list-view>
+			<list-view:column qualifier="code"/>
+			<list-view:column qualifier="name"/>
+			<list-view:column qualifier="status"/>
+			<list-view:column qualifier="validFrom"/>
+			<list-view:column qualifier="validTo"/>
+			<list-view:column qualifier="holdoutPercent"/>
+		</list-view:list-view>
+	</context>
+
+	<!-- ================= StrategicPriority ================= -->
+	<context merge-by="type" parent="GenericItem" type="StrategicPriority" component="editor-area">
+		<editorArea:editorArea>
+			<editorArea:tab name="tab.optimizer.general">
+				<editorArea:section name="section.optimizer.general">
+					<editorArea:attribute qualifier="code"/>
+					<editorArea:attribute qualifier="status"/>
+					<editorArea:attribute qualifier="product"/>
+					<editorArea:attribute qualifier="category"/>
+					<editorArea:attribute qualifier="boost"/>
+					<editorArea:attribute qualifier="validFrom"/>
+					<editorArea:attribute qualifier="validTo"/>
+				</editorArea:section>
+			</editorArea:tab>
+			<editorArea:tab name="tab.optimizer.targeting">
+				<editorArea:section name="section.optimizer.targeting">
+					<editorArea:attribute qualifier="segments"/>
+					<editorArea:attribute qualifier="regions"/>
+				</editorArea:section>
+			</editorArea:tab>
+		</editorArea:editorArea>
+	</context>
+	<context merge-by="type" parent="GenericItem" type="StrategicPriority" component="listview">
+		<list-view:list-view>
+			<list-view:column qualifier="code"/>
+			<list-view:column qualifier="status"/>
+			<list-view:column qualifier="product"/>
+			<list-view:column qualifier="category"/>
+			<list-view:column qualifier="boost"/>
+			<list-view:column qualifier="validTo"/>
+		</list-view:list-view>
+	</context>
+
+	<!-- ================= RecoBundle / entries ================= -->
+	<context merge-by="type" parent="GenericItem" type="RecoBundle" component="editor-area">
+		<editorArea:editorArea>
+			<editorArea:tab name="tab.optimizer.general">
+				<editorArea:section name="section.optimizer.general">
+					<editorArea:attribute qualifier="code"/>
+					<editorArea:attribute qualifier="name"/>
+					<editorArea:attribute qualifier="status"/>
+					<editorArea:attribute qualifier="promotionCode"/>
+					<editorArea:attribute qualifier="validFrom"/>
+					<editorArea:attribute qualifier="validTo"/>
+				</editorArea:section>
+			</editorArea:tab>
+			<editorArea:tab name="tab.optimizer.content">
+				<editorArea:section name="section.optimizer.content">
+					<editorArea:attribute qualifier="entries"/>
+				</editorArea:section>
+			</editorArea:tab>
+		</editorArea:editorArea>
+	</context>
+	<context merge-by="type" parent="GenericItem" type="RecoBundle" component="listview">
+		<list-view:list-view>
+			<list-view:column qualifier="code"/>
+			<list-view:column qualifier="name"/>
+			<list-view:column qualifier="status"/>
+			<list-view:column qualifier="validTo"/>
+		</list-view:list-view>
+	</context>
+	<context merge-by="type" parent="GenericItem" type="RecoBundleEntry" component="editor-area">
+		<editorArea:editorArea>
+			<editorArea:tab name="tab.optimizer.general">
+				<editorArea:section name="section.optimizer.general">
+					<editorArea:attribute qualifier="bundle"/>
+					<editorArea:attribute qualifier="product"/>
+					<editorArea:attribute qualifier="qtyRatio"/>
+				</editorArea:section>
+			</editorArea:tab>
+		</editorArea:editorArea>
+	</context>
+
+	<!-- ================= DealerSegment ================= -->
+	<context merge-by="type" parent="GenericItem" type="DealerSegment" component="editor-area">
+		<editorArea:editorArea>
+			<editorArea:tab name="tab.optimizer.general">
+				<editorArea:section name="section.optimizer.general">
+					<editorArea:attribute qualifier="code"/>
+					<editorArea:attribute qualifier="name"/>
+				</editorArea:section>
+				<editorArea:section name="section.optimizer.rules">
+					<editorArea:attribute qualifier="region"/>
+					<editorArea:attribute qualifier="dealerType"/>
+					<editorArea:attribute qualifier="minOrderValue"/>
+					<editorArea:attribute qualifier="maxOrderValue"/>
+					<editorArea:attribute qualifier="minOrdersPerYear"/>
+					<editorArea:attribute qualifier="maxOrdersPerYear"/>
+				</editorArea:section>
+			</editorArea:tab>
+		</editorArea:editorArea>
+	</context>
+
+	<!-- ================= OptimizerConfig ================= -->
+	<context merge-by="type" parent="GenericItem" type="OptimizerConfig" component="editor-area">
+		<editorArea:editorArea>
+			<editorArea:tab name="tab.optimizer.general">
+				<editorArea:section name="section.optimizer.general">
+					<editorArea:attribute qualifier="code"/>
+					<editorArea:attribute qualifier="version"/>
+					<editorArea:attribute qualifier="active"/>
+					<editorArea:attribute qualifier="activeFrom"/>
+				</editorArea:section>
+				<editorArea:section name="section.optimizer.tuning">
+					<editorArea:attribute qualifier="boostCap"/>
+					<editorArea:attribute qualifier="strategicLineShareCap"/>
+					<editorArea:attribute qualifier="strategicValueShareCap"/>
+					<editorArea:attribute qualifier="gateMinCategoryOrders"/>
+					<editorArea:attribute qualifier="minOrders"/>
+					<editorArea:attribute qualifier="dueMin"/>
+					<editorArea:attribute qualifier="dueMax"/>
+				</editorArea:section>
+			</editorArea:tab>
+		</editorArea:editorArea>
+	</context>
+
+	<!-- ================= Audit (read only for auditors) ================= -->
+	<context merge-by="type" parent="GenericItem" type="OptimizerSuggestionAudit" component="editor-area">
+		<editorArea:editorArea>
+			<editorArea:tab name="tab.optimizer.general">
+				<editorArea:section name="section.optimizer.general">
+					<editorArea:attribute qualifier="auditId" readonly="true"/>
+					<editorArea:attribute qualifier="b2bUnit" readonly="true"/>
+					<editorArea:attribute qualifier="budgetTier" readonly="true"/>
+					<editorArea:attribute qualifier="aiUsed" readonly="true"/>
+					<editorArea:attribute qualifier="fallbackUsed" readonly="true"/>
+					<editorArea:attribute qualifier="holdoutKeyId" readonly="true"/>
+					<editorArea:attribute qualifier="appliedStrategyJson" readonly="true"/>
+					<editorArea:attribute qualifier="selectionJson" readonly="true"/>
+				</editorArea:section>
+			</editorArea:tab>
+		</editorArea:editorArea>
+	</context>
+
+</config>

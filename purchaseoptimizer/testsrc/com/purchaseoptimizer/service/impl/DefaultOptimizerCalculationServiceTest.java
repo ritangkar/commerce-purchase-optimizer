@@ -7,7 +7,9 @@ import static org.junit.Assert.assertTrue;
 import de.hybris.bootstrap.annotations.UnitTest;
 
 import com.purchaseoptimizer.data.SuggestionCandidateData;
+import com.purchaseoptimizer.enums.CandidateGroup;
 import com.purchaseoptimizer.enums.ConfidenceTier;
+import com.purchaseoptimizer.enums.RecoStatus;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -156,5 +158,149 @@ public class DefaultOptimizerCalculationServiceTest
 		final Map<String, Long> r = calc.selectWithinBudget(two, 1000d, 100, 0.8);
 		assertEquals(1, r.size());
 		assertTrue(r.containsKey("b"));
+	}
+
+	// ---- strategic blend: score, gate, workflow, holdout, caps, bundles
+	@Test
+	public void finalScoreAddsOnlyCappedBoostWhenGateOpen()
+	{
+		assertEquals(0.45, calc.finalScore(0.40, 0.05, 0.15, true), D);
+		assertEquals(0.55, calc.finalScore(0.40, 0.90, 0.15, true), D); // capped at boostCap
+		assertEquals(0.40, calc.finalScore(0.40, 0.90, 0.15, false), D); // gate closed: no boost
+		assertEquals(0.40, calc.finalScore(0.40, -1d, 0.15, true), D); // never negative boost
+	}
+
+	@Test
+	public void gateNeedsRelatedCategoryHistory()
+	{
+		assertTrue(!calc.gateOpen(0, 1));
+		assertTrue(calc.gateOpen(1, 1));
+		assertTrue(!calc.gateOpen(2, 3));
+	}
+
+	@Test
+	public void workflowTransitions()
+	{
+		assertTrue(calc.isTransitionAllowed(RecoStatus.DRAFT, RecoStatus.IN_REVIEW));
+		assertTrue(calc.isTransitionAllowed(RecoStatus.IN_REVIEW, RecoStatus.APPROVED));
+		assertTrue(calc.isTransitionAllowed(RecoStatus.APPROVED, RecoStatus.ACTIVE));
+		assertTrue(calc.isTransitionAllowed(RecoStatus.ACTIVE, RecoStatus.EXPIRED));
+		assertTrue(!calc.isTransitionAllowed(RecoStatus.DRAFT, RecoStatus.APPROVED)); // cannot skip review
+		assertTrue(!calc.isTransitionAllowed(RecoStatus.DRAFT, RecoStatus.ACTIVE));
+		assertTrue(!calc.isTransitionAllowed(RecoStatus.ACTIVE, RecoStatus.DRAFT));
+		assertTrue(!calc.isTransitionAllowed(RecoStatus.EXPIRED, RecoStatus.ACTIVE));
+		assertTrue(calc.isTransitionAllowed(RecoStatus.ACTIVE, RecoStatus.ACTIVE));
+	}
+
+	@Test
+	public void holdoutIsDeterministicKeyedAndRoughlyTheRightSize()
+	{
+		assertEquals(calc.isHoldout("k", "CAMP1", "dealer-7", 30), calc.isHoldout("k", "CAMP1", "dealer-7", 30));
+		assertTrue(!calc.isHoldout("k", "CAMP1", "dealer-7", 0));
+		assertTrue(calc.isHoldout("k", "CAMP1", "dealer-7", 100));
+		int in = 0;
+		int differsByCampaign = 0;
+		int differsBySecret = 0;
+		for (int i = 0; i < 5000; i++)
+		{
+			final boolean h = calc.isHoldout("k", "CAMP1", "dealer-" + i, 10);
+			in += h ? 1 : 0;
+			differsByCampaign += h != calc.isHoldout("k", "CAMP2", "dealer-" + i, 10) ? 1 : 0;
+			differsBySecret += h != calc.isHoldout("other", "CAMP1", "dealer-" + i, 10) ? 1 : 0;
+		}
+		assertTrue("holdout share " + in, in > 400 && in < 600); // ~10 %
+		assertTrue(differsByCampaign > 0);
+		assertTrue(differsBySecret > 0);
+	}
+
+	private SuggestionCandidateData line(final String id, final CandidateGroup g, final String bundle, final double price,
+			final long qty, final double relevance)
+	{
+		final SuggestionCandidateData c = cand(id, price, 1, qty, relevance);
+		c.setGroup(g);
+		c.setBundleCode(bundle);
+		return c;
+	}
+
+	@Test
+	public void strategicLineCapAndWeakestRemovedFirst()
+	{
+		final List<SuggestionCandidateData> basket = new ArrayList<>();
+		for (int i = 1; i <= 6; i++)
+		{
+			basket.add(line("p" + i, CandidateGroup.PATTERN, null, 100, 1, 0.5));
+		}
+		basket.add(line("s1", CandidateGroup.STRATEGIC, null, 100, 1, 0.30));
+		basket.add(line("s2", CandidateGroup.STRATEGIC, null, 100, 1, 0.20));
+		basket.add(line("s3", CandidateGroup.STRATEGIC, null, 100, 1, 0.40));
+		// 9 lines, 3 strategic = 33 % > 25 % -> drop weakest until <= floor(0.25 * n)
+		final List<SuggestionCandidateData> out = calc.enforceStrategicCaps(basket, 0.25, 1.0);
+		final long strategic = out.stream().filter(c -> c.getGroup() == CandidateGroup.STRATEGIC).count();
+		assertTrue(strategic <= Math.floor(0.25 * out.size()));
+		assertEquals(6, out.stream().filter(c -> c.getGroup() == CandidateGroup.PATTERN).count()); // pattern untouched
+		assertTrue(out.stream().noneMatch(c -> c.getCandidateId().equals("s2"))); // weakest went first
+	}
+
+	@Test
+	public void strategicValueCapAndBundleRemovedAsUnit()
+	{
+		final List<SuggestionCandidateData> basket = new ArrayList<>();
+		for (int i = 1; i <= 8; i++)
+		{
+			basket.add(line("p" + i, CandidateGroup.PATTERN, null, 100, 1, 0.5)); // 800
+		}
+		basket.add(line("b1", CandidateGroup.BUNDLE_CAMPAIGN, "BUN", 300, 1, 0.3)); // 300 + 300 = 600 of 1400 = 43 %
+		basket.add(line("b2", CandidateGroup.BUNDLE_CAMPAIGN, "BUN", 300, 1, 0.3));
+		final List<SuggestionCandidateData> out = calc.enforceStrategicCaps(basket, 0.50, 0.30);
+		assertTrue(out.stream().noneMatch(c -> "BUN".equals(c.getBundleCode()))); // both lines gone, never half a bundle
+		assertEquals(8, out.size());
+	}
+
+	@Test
+	public void noStrategicLinesWhenBasketTooSmallForTheCap()
+	{
+		final List<SuggestionCandidateData> basket = new ArrayList<>();
+		basket.add(line("p1", CandidateGroup.PATTERN, null, 100, 1, 0.5));
+		basket.add(line("s1", CandidateGroup.STRATEGIC, null, 100, 1, 0.3));
+		assertEquals(1, calc.enforceStrategicCaps(basket, 0.25, 0.30).size());
+	}
+
+	@Test
+	public void bundleQuantityScalesFromTypicalQuantity()
+	{
+		assertEquals(24L, calc.scaleBundleQuantity(10, 2.0, 12, 1, 0)); // 20 -> pack of 12 -> 24
+		assertEquals(6L, calc.scaleBundleQuantity(10, 0.5, 6, 1, 0)); // 5 -> 6
+		assertEquals(0L, calc.scaleBundleQuantity(0, 2.0, 6, 1, 0)); // no history to scale from
+		assertEquals(0L, calc.scaleBundleQuantity(10, 0, 6, 1, 0));
+	}
+
+	@Test
+	public void bundleIsAllOrNothingInBudgetFit()
+	{
+		final List<SuggestionCandidateData> items = new ArrayList<>();
+		items.add(line("a1", CandidateGroup.BUNDLE_CAMPAIGN, "BUN", 400, 1, 0.9));
+		items.add(line("a2", CandidateGroup.BUNDLE_CAMPAIGN, "BUN", 400, 1, 0.9)); // bundle costs 800
+		items.add(line("p1", CandidateGroup.PATTERN, null, 300, 1, 0.1));
+		// budget fits only one bundle line (400) but not the whole bundle (800) -> none of the bundle
+		Map<String, Long> r = calc.selectWithinBudget(items, 500d, 100, 0.8);
+		assertTrue(!r.containsKey("a1") && !r.containsKey("a2"));
+		assertTrue(r.containsKey("p1"));
+		// budget fits the bundle -> both lines together
+		r = calc.selectWithinBudget(items, 900d, 100, 0.8);
+		assertTrue(r.containsKey("a1") && r.containsKey("a2"));
+		// property check: either both or neither, never exceeds budget
+		final Random rnd = new Random(7);
+		for (int run = 0; run < 200; run++)
+		{
+			final double budget = 200 + rnd.nextInt(2000);
+			r = calc.selectWithinBudget(items, budget, 100, 0.8);
+			assertEquals(r.containsKey("a1"), r.containsKey("a2"));
+			double cost = 0;
+			for (final SuggestionCandidateData c : items)
+			{
+				cost += c.getUnitPrice() * r.getOrDefault(c.getCandidateId(), 0L);
+			}
+			assertTrue(cost <= budget);
+		}
 	}
 }

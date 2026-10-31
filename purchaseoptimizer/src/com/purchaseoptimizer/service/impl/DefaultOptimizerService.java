@@ -2,21 +2,14 @@ package com.purchaseoptimizer.service.impl;
 
 import de.hybris.platform.b2b.model.B2BCustomerModel;
 import de.hybris.platform.b2b.model.B2BUnitModel;
-import de.hybris.platform.catalog.enums.ArticleApprovalStatus;
 import de.hybris.platform.category.model.CategoryModel;
-import de.hybris.platform.commerceservices.price.CommercePriceService;
-import de.hybris.platform.commerceservices.stock.CommerceStockService;
 import de.hybris.platform.core.model.order.OrderEntryModel;
 import de.hybris.platform.core.model.product.ProductModel;
-import de.hybris.platform.basecommerce.enums.StockLevelStatus;
 import de.hybris.platform.catalog.model.ProductReferenceModel;
 import de.hybris.platform.servicelayer.config.ConfigurationService;
 import de.hybris.platform.servicelayer.exceptions.AmbiguousIdentifierException;
 import de.hybris.platform.servicelayer.exceptions.UnknownIdentifierException;
 import de.hybris.platform.servicelayer.model.ModelService;
-import de.hybris.platform.store.BaseStoreModel;
-import de.hybris.platform.store.services.BaseStoreService;
-import de.hybris.platform.jalo.order.price.PriceInformation;
 import de.hybris.platform.product.ProductService;
 
 import java.time.ZonedDateTime;
@@ -45,10 +38,17 @@ import com.purchaseoptimizer.dao.OptimizerOrderHistoryDao;
 import com.purchaseoptimizer.enums.BudgetTier;
 import com.purchaseoptimizer.enums.CandidateGroup;
 import com.purchaseoptimizer.enums.ConfidenceTier;
+import com.purchaseoptimizer.data.DealerProfileData;
+import com.purchaseoptimizer.data.EligibilityData;
+import com.purchaseoptimizer.data.OptimizerConfigData;
 import com.purchaseoptimizer.data.OptimizerResultData;
+import com.purchaseoptimizer.data.StrategyTraceData;
 import com.purchaseoptimizer.data.SuggestionCandidateData;
 import com.purchaseoptimizer.model.OptimizerSuggestionAuditModel;
 import com.purchaseoptimizer.service.OptimizerCalculationService;
+import com.purchaseoptimizer.service.OptimizerConfigService;
+import com.purchaseoptimizer.service.OptimizerEligibilityService;
+import com.purchaseoptimizer.service.OptimizerStrategyService;
 import com.purchaseoptimizer.service.OptimizerService;
 import com.purchaseoptimizer.service.ai.AiResponseValidator;
 import com.purchaseoptimizer.service.ai.OpenAiClient;
@@ -71,14 +71,14 @@ public class DefaultOptimizerService implements OptimizerService
 	private ConfigurationService configurationService;
 	@Resource(name = "productService")
 	private ProductService productService;
-	@Resource(name = "commercePriceService")
-	private CommercePriceService commercePriceService;
-	@Resource(name = "commerceStockService")
-	private CommerceStockService commerceStockService;
-	@Resource(name = "baseStoreService")
-	private BaseStoreService baseStoreService;
 	@Resource(name = "modelService")
 	private ModelService modelService;
+	@Resource(name = "optimizerEligibilityService")
+	private OptimizerEligibilityService eligibilityService;
+	@Resource(name = "optimizerConfigService")
+	private OptimizerConfigService configService;
+	@Resource(name = "optimizerStrategyService")
+	private OptimizerStrategyService strategyService;
 	@Resource(name = "optimizerCalculationService")
 	private OptimizerCalculationService calc;
 	@Resource(name = "optimizerOpenAiClient")
@@ -116,12 +116,18 @@ public class DefaultOptimizerService implements OptimizerService
 
 		final double totalSpend = orderValues.values().stream().mapToDouble(Double::doubleValue).sum();
 
-		// 2. Candidates
+		final OptimizerConfigData cfg = configService.getConfig();
+
+		// 2. Candidates from the dealer's own ordering pattern
 		final List<SuggestionCandidateData> candidates = new ArrayList<>();
+		final Map<String, Integer> orderCountByProduct = new LinkedHashMap<>();
+		final Map<String, Double> medianQtyByProduct = new LinkedHashMap<>();
 		for (final Map.Entry<String, List<Purchase>> e : byProduct.entrySet())
 		{
+			orderCountByProduct.put(e.getKey(), e.getValue().size());
+			medianQtyByProduct.put(e.getKey(), calc.median(e.getValue().stream().mapToDouble(p -> p.qty).toArray()));
 			final SuggestionCandidateData c = buildPatternCandidate(e.getKey(), e.getValue(), now, totalSpend,
-					openProductCodes);
+					openProductCodes, cfg);
 			if (c != null)
 			{
 				candidates.add(c);
@@ -132,27 +138,45 @@ public class DefaultOptimizerService implements OptimizerService
 			candidates.addAll(buildAffinityCandidates(byProduct, candidates, openProductCodes));
 		}
 
-		// 3. Rank and number them
-		candidates.sort(Comparator.comparingDouble(SuggestionCandidateData::getRelevance).reversed()
+		// 3. Automatic order-size profile, then dealer profile for targeting
+		final double[] values = orderValues.values().stream().mapToDouble(Double::doubleValue).toArray();
+		applyOrderSizeProfile(result, values, requestedTier);
+		final Double usual = values.length >= intProp("budget.min.orders", 3) ? calc.median(calc.winsoriseUpper(values)) : null;
+		final DealerProfileData profile = strategyService.resolveDealerProfile(unit, values.length, usual);
+
+		// 4. Business configuration: strategic priorities and campaign bundles (deterministic, no AI)
+		final List<SuggestionCandidateData> all = strategyService.blend(profile, cfg, candidates, orderCountByProduct,
+				medianQtyByProduct, openProductCodes, result);
+		all.sort(Comparator.comparingDouble(SuggestionCandidateData::getRelevance).reversed()
 				.thenComparing(SuggestionCandidateData::getProductCode));
 
-		// 4. Automatic order-size profile
-		applyOrderSizeProfile(result, orderValues.values().stream().mapToDouble(Double::doubleValue).toArray(), requestedTier);
-
-		// 5. Optimizer
+		// 5. Shortlist (bundles stay whole), budget fit, caps
 		final int maxLines = result.getOrderSizeValue() == null ? intProp("max.lines.exploratory", 10) : intProp("max.lines", 25);
-		final List<SuggestionCandidateData> shortlist = new ArrayList<>(candidates.subList(0, Math.min(candidates.size(), maxLines)));
+		final List<SuggestionCandidateData> shortlist = shortlist(all, maxLines);
 		for (int i = 0; i < shortlist.size(); i++)
 		{
 			shortlist.get(i).setCandidateId(String.format(Locale.ROOT, "cand_%02d", i + 1));
 		}
-		final int candidateCount = candidates.size();
-		final List<SuggestionCandidateData> selected = optimize(shortlist, result);
+		final int candidateCount = all.size();
+		final List<SuggestionCandidateData> fitted = optimize(shortlist, result);
+		final List<SuggestionCandidateData> selected = calc.enforceStrategicCaps(fitted, cfg.getStrategicLineShareCap(),
+				cfg.getStrategicValueShareCap());
+		if (selected.size() < fitted.size())
+		{
+			for (final SuggestionCandidateData c : fitted)
+			{
+				if (!selected.contains(c))
+				{
+					addTrace(result, c, "REMOVED_BY_STRATEGIC_CAP");
+				}
+			}
+		}
 		result.setLines(selected);
 
 		// 6. Explanations
 		applyTemplates(selected);
-		applyAiExplanations(selected, unit, result);
+		applyAiExplanations(selected.stream().filter(c -> CandidateGroup.PATTERN.equals(c.getGroup())
+				|| CandidateGroup.AFFINITY.equals(c.getGroup())).collect(Collectors.toList()), unit, result);
 
 		// 7. Audit (never blocks the response)
 		writeAudit(customer, unit, result, candidateCount);
@@ -204,10 +228,10 @@ public class DefaultOptimizerService implements OptimizerService
 	// ------------------------------------------------------------------------------------------------ candidates
 
 	private SuggestionCandidateData buildPatternCandidate(final String code, final List<Purchase> purchases, final Date now,
-			final double totalSpend, final Set<String> openProductCodes)
+			final double totalSpend, final Set<String> openProductCodes, final OptimizerConfigData cfg)
 	{
 		final int n = purchases.size();
-		if (n < intProp("min.orders", 3) || openProductCodes.contains(code))
+		if (n < cfg.getMinOrders() || openProductCodes.contains(code))
 		{
 			return null; // sparse history, or an open PO already covers this product
 		}
@@ -221,15 +245,15 @@ public class DefaultOptimizerService implements OptimizerService
 		final Date last = purchases.get(n - 1).date;
 		final double daysSince = (now.getTime() - last.getTime()) / MS_PER_DAY;
 		final double ratio = calc.dueRatio(daysSince, medianInterval);
-		final double dueMin = dbl("due.min", 0.85d);
-		final double dueMax = dbl("due.max", 1.30d);
+		final double dueMin = cfg.getDueMin();
+		final double dueMax = cfg.getDueMax();
 		final double due = calc.dueScore(ratio, dueMin, dueMax, dbl("due.drop.above", 5.0d));
 		if (due <= 0d)
 		{
 			return null;
 		}
 
-		final EligibleProduct ep = checkEligibility(code);
+		final EligibilityData ep = eligibilityService.check(code);
 		if (ep == null)
 		{
 			return null;
@@ -242,7 +266,7 @@ public class DefaultOptimizerService implements OptimizerService
 		final double trend = calc.trendFactor(calc.theilSenSlope(qtys), n, base,
 				dbl("qty.trend.min", 0.85d), dbl("qty.trend.max", 1.15d));
 		final double cap = dbl("qty.p90.cap.factor", 1.25d) * calc.percentile(qtys, 0.9d);
-		final long qty = calc.roundQuantity(base * trend, ep.step, ep.minQty, cap, ep.maxQty);
+		final long qty = calc.roundQuantity(base * trend, ep.getStep(), ep.getMinQty(), cap, ep.getMaxQty());
 		if (qty <= 0L)
 		{
 			return null;
@@ -263,9 +287,9 @@ public class DefaultOptimizerService implements OptimizerService
 		c.setMedianIntervalDays(Math.max(1L, Math.round(medianInterval)));
 		c.setDueState(ratio <= dueMax ? "APPROACHING_TYPICAL_PERIOD" : "BEYOND_TYPICAL_PERIOD");
 		c.setSuggestedQuantity(qty);
-		c.setPackSize(ep.step);
-		c.setMinQuantity(Math.max(ep.minQty, ep.step));
-		c.setUnitPrice(ep.unitPrice);
+		c.setPackSize(ep.getStep());
+		c.setMinQuantity(Math.max(ep.getMinQty(), ep.getStep()));
+		c.setUnitPrice(ep.getUnitPrice());
 		c.setRelevance(relevance);
 		c.setConfidenceTier(calc.confidenceTier(n, cv, daysSince, medianInterval));
 		c.setEvidenceScore(calc.evidenceScore(n, recency, cv, 1.0d));
@@ -285,7 +309,6 @@ public class DefaultOptimizerService implements OptimizerService
 		excluded.addAll(openProductCodes);
 
 		final Map<String, Double> targets = new TreeMap<>(); // deterministic order
-		final Map<String, EligibleProduct> eligible = new HashMap<>();
 		for (final Map.Entry<String, List<Purchase>> e : byProduct.entrySet())
 		{
 			if (e.getValue().size() < minSourceOrders)
@@ -317,7 +340,7 @@ public class DefaultOptimizerService implements OptimizerService
 			{
 				break;
 			}
-			final EligibleProduct ep = checkEligibility(tcode);
+			final EligibilityData ep = eligibilityService.check(tcode);
 			if (ep == null)
 			{
 				continue;
@@ -327,11 +350,11 @@ public class DefaultOptimizerService implements OptimizerService
 			c.setGroup(CandidateGroup.AFFINITY);
 			c.setConfidenceTier(ConfidenceTier.EXPLORATORY);
 			c.setDueState("CATALOGUE_LINK");
-			final long q = Math.max(ep.minQty, ep.step);
+			final long q = Math.max(ep.getMinQty(), ep.getStep());
 			c.setSuggestedQuantity(q);
-			c.setPackSize(ep.step);
+			c.setPackSize(ep.getStep());
 			c.setMinQuantity(q);
-			c.setUnitPrice(ep.unitPrice);
+			c.setUnitPrice(ep.getUnitPrice());
 			c.setRelevance(dbl("score.affinity", 0.20d));
 			c.setEvidenceScore(calc.evidenceScore(0, 0d, 1d, 0.6d));
 			c.getEvidenceLabels().add("Inferred: linked in the catalogue to a product you order regularly");
@@ -348,63 +371,6 @@ public class DefaultOptimizerService implements OptimizerService
 		c.setExplanationSource("TEMPLATE");
 		c.setEvidenceLabels(new ArrayList<>());
 		return c;
-	}
-
-	// ------------------------------------------------------------------------------------------------ eligibility
-
-	private static final class EligibleProduct
-	{
-		long step = 1;
-		long minQty = 1;
-		long maxQty = 0;
-		double unitPrice;
-	}
-
-	/** Anything ineligible is removed BEFORE scoring. Returns null when the product must not be suggested. */
-	private EligibleProduct checkEligibility(final String code)
-	{
-		final ProductModel p = resolve(code);
-		if (p == null || !ArticleApprovalStatus.APPROVED.equals(p.getApprovalStatus()))
-		{
-			return null;
-		}
-		final Date now = new Date();
-		if ((p.getOnlineDate() != null && p.getOnlineDate().after(now))
-				|| (p.getOfflineDate() != null && p.getOfflineDate().before(now)))
-		{
-			return null;
-		}
-		final EligibleProduct ep = new EligibleProduct();
-		try
-		{
-			final PriceInformation pi = commercePriceService.getWebPriceForProduct(p);
-			if (pi == null || pi.getPriceValue() == null || pi.getPriceValue().getValue() <= 0d)
-			{
-				return null;
-			}
-			ep.unitPrice = pi.getPriceValue().getValue();
-		}
-		catch (final RuntimeException ex)
-		{
-			return null; // no price for this dealer's price group
-		}
-		try
-		{
-			final BaseStoreModel store = baseStoreService.getCurrentBaseStore();
-			if (store != null && commerceStockService.isStockSystemEnabled(store)
-					&& StockLevelStatus.OUTOFSTOCK.equals(commerceStockService.getStockLevelStatusForProductAndBaseStore(p, store)))
-			{
-				return null;
-			}
-		}
-		catch (final RuntimeException ex)
-		{
-			LOG.debug("Stock check skipped for a product: {}", ex.getClass().getSimpleName());
-		}
-		ep.step = p.getOrderQuantityInterval() == null || p.getOrderQuantityInterval() < 1 ? 1 : p.getOrderQuantityInterval();
-		ep.minQty = p.getMinOrderQuantity() == null || p.getMinOrderQuantity() < 1 ? 1 : p.getMinOrderQuantity();
-		ep.maxQty = p.getMaxOrderQuantity() == null || p.getMaxOrderQuantity() < 1 ? 0 : p.getMaxOrderQuantity();
-		return ep;
 	}
 
 	private ProductModel resolve(final String code)
@@ -480,6 +446,44 @@ public class DefaultOptimizerService implements OptimizerService
 		return out;
 	}
 
+	/** Takes the best lines up to maxLines; a bundle is taken whole or not at all. */
+	private List<SuggestionCandidateData> shortlist(final List<SuggestionCandidateData> sorted, final int maxLines)
+	{
+		final List<SuggestionCandidateData> out = new ArrayList<>();
+		final Set<String> doneBundles = new HashSet<>();
+		for (final SuggestionCandidateData c : sorted)
+		{
+			final String bundle = c.getBundleCode();
+			if (bundle == null || bundle.isEmpty())
+			{
+				if (out.size() < maxLines)
+				{
+					out.add(c);
+				}
+			}
+			else if (doneBundles.add(bundle))
+			{
+				final List<SuggestionCandidateData> lines = sorted.stream().filter(x -> bundle.equals(x.getBundleCode()))
+						.collect(Collectors.toList());
+				if (out.size() + lines.size() <= maxLines)
+				{
+					out.addAll(lines);
+				}
+			}
+		}
+		return out;
+	}
+
+	private void addTrace(final OptimizerResultData result, final SuggestionCandidateData c, final String outcome)
+	{
+		final StrategyTraceData t = new StrategyTraceData();
+		t.setCampaignCode(c.getStrategicCode());
+		t.setBundleCode(c.getBundleCode());
+		t.setBoost(c.getBoostApplied());
+		t.setOutcome(outcome + ":" + c.getProductCode());
+		result.getStrategyTrace().add(t);
+	}
+
 	// ------------------------------------------------------------------------------------------------ explanations
 
 	private void applyTemplates(final List<SuggestionCandidateData> lines)
@@ -493,6 +497,18 @@ public class DefaultOptimizerService implements OptimizerService
 
 	static String templateFor(final SuggestionCandidateData c)
 	{
+		if (CandidateGroup.STRATEGIC.equals(c.getGroup()))
+		{
+			return "This product is a current business priority from your supplier and is shown separately from your ordering "
+					+ "pattern. You have ordered related products before. Suggested quantity " + c.getSuggestedQuantity()
+					+ " follows the typical size of your previous orders in that area.";
+		}
+		if (CandidateGroup.BUNDLE_CAMPAIGN.equals(c.getGroup()))
+		{
+			return "This product is part of a current campaign bundle and is shown separately from your ordering pattern. "
+					+ "The bundle lines are suggested together. Suggested quantity " + c.getSuggestedQuantity()
+					+ " follows the typical size of your previous orders.";
+		}
 		final String lead = "Based on your previous ordering pattern, you may want to review this product for your next purchase. ";
 		if (CandidateGroup.AFFINITY.equals(c.getGroup()))
 		{
@@ -637,9 +653,14 @@ public class DefaultOptimizerService implements OptimizerService
 				m.put("quantity", c.getSuggestedQuantity());
 				m.put("group", c.getGroup().name());
 				m.put("tier", c.getConfidenceTier().name());
+				m.put("strategicCode", c.getStrategicCode());
+				m.put("bundleCode", c.getBundleCode());
+				m.put("boost", c.getBoostApplied());
 				sel.add(m);
 			}
 			audit.setSelectionJson(mapper.writeValueAsString(sel));
+			audit.setHoldoutKeyId(result.getHoldoutKeyId());
+			audit.setAppliedStrategyJson(mapper.writeValueAsString(strategyTraceAsMaps(result)));
 			modelService.save(audit);
 			result.setAuditId(auditId);
 		}
@@ -647,6 +668,26 @@ public class DefaultOptimizerService implements OptimizerService
 		{
 			LOG.warn("Could not write optimizer audit: {}", e.getClass().getSimpleName());
 		}
+	}
+
+	private List<Map<String, Object>> strategyTraceAsMaps(final OptimizerResultData result)
+	{
+		final List<Map<String, Object>> out = new ArrayList<>();
+		if (result.getStrategyTrace() != null)
+		{
+			for (final StrategyTraceData t : result.getStrategyTrace())
+			{
+				final Map<String, Object> m = new LinkedHashMap<>();
+				m.put("campaignCode", t.getCampaignCode());
+				m.put("priorityCode", t.getPriorityCode());
+				m.put("bundleCode", t.getBundleCode());
+				m.put("boost", t.getBoost());
+				m.put("holdout", t.isHoldout());
+				m.put("outcome", t.getOutcome());
+				out.add(m);
+			}
+		}
+		return out;
 	}
 
 	// ------------------------------------------------------------------------------------------------ helpers

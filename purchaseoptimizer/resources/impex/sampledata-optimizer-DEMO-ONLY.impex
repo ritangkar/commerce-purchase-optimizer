@@ -1,0 +1,5 @@
+# DEMO DATA ONLY - do NOT import into production.
+# Segments are rule based; blank = any. Regions are region isocodes, dealerType is a user-group uid.
+INSERT_UPDATE DealerSegment;code[unique=true];name[lang=en];region;dealerType;minOrderValue;maxOrderValue;minOrdersPerYear;maxOrdersPerYear
+;DEMO_SMALL_FREQUENT;Small frequent dealers;;;;50000;12;
+;DEMO_LARGE;Large order dealers;;;50000;;;

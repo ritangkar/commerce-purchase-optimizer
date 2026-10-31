@@ -1,15 +1,21 @@
 package com.purchaseoptimizer.service.impl;
 
 import com.purchaseoptimizer.data.SuggestionCandidateData;
+import com.purchaseoptimizer.enums.CandidateGroup;
 import com.purchaseoptimizer.enums.ConfidenceTier;
+import com.purchaseoptimizer.enums.RecoStatus;
 import com.purchaseoptimizer.service.OptimizerCalculationService;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 
 public class DefaultOptimizerCalculationService implements OptimizerCalculationService
@@ -269,7 +275,156 @@ public class DefaultOptimizerCalculationService implements OptimizerCalculationS
 				+ 0.10d * sourceWeight;
 	}
 
+	// ------------------------------------------------------------------------------------------------ strategic blend
+
+	@Override
+	public boolean isTransitionAllowed(final RecoStatus from, final RecoStatus to)
+	{
+		if (from == null || to == null || from == to)
+		{
+			return true; // no change
+		}
+		switch (from)
+		{
+			case DRAFT:
+				return to == RecoStatus.IN_REVIEW;
+			case IN_REVIEW:
+				return to == RecoStatus.DRAFT || to == RecoStatus.APPROVED;
+			case APPROVED:
+				return to == RecoStatus.ACTIVE || to == RecoStatus.EXPIRED || to == RecoStatus.DRAFT;
+			case ACTIVE:
+				return to == RecoStatus.EXPIRED;
+			default:
+				return false; // EXPIRED is final
+		}
+	}
+
+	@Override
+	public boolean isHoldout(final String secret, final String campaignCode, final String dealerId, final int holdoutPercent)
+	{
+		if (holdoutPercent <= 0)
+		{
+			return false;
+		}
+		if (holdoutPercent >= 100)
+		{
+			return true;
+		}
+		try
+		{
+			final Mac mac = Mac.getInstance("HmacSHA256");
+			mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+			final byte[] h = mac.doFinal((campaignCode + "|" + dealerId).getBytes(StandardCharsets.UTF_8));
+			final long v = ((h[0] & 0xffL) << 24) | ((h[1] & 0xffL) << 16) | ((h[2] & 0xffL) << 8) | (h[3] & 0xffL);
+			return (v % 100L) < holdoutPercent;
+		}
+		catch (final Exception e)
+		{
+			throw new IllegalStateException("HMAC unavailable", e);
+		}
+	}
+
+	@Override
+	public boolean gateOpen(final int ordersInRelatedCategory, final int minOrders)
+	{
+		return ordersInRelatedCategory >= Math.max(1, minOrders);
+	}
+
+	@Override
+	public double finalScore(final double relevance, final double boost, final double boostCap, final boolean gateOpen)
+	{
+		final double b = gateOpen ? Math.max(0d, Math.min(boost, boostCap)) : 0d;
+		return Math.max(0d, relevance + b);
+	}
+
+	@Override
+	public long scaleBundleQuantity(final double typicalQty, final double qtyRatio, final long step, final long minQty,
+			final long maxQty)
+	{
+		if (typicalQty <= 0d || qtyRatio <= 0d)
+		{
+			return 0L;
+		}
+		return roundQuantity(typicalQty * qtyRatio, step, minQty, 0d, maxQty);
+	}
+
+	private boolean isStrategic(final SuggestionCandidateData c)
+	{
+		return CandidateGroup.STRATEGIC.equals(c.getGroup()) || CandidateGroup.BUNDLE_CAMPAIGN.equals(c.getGroup());
+	}
+
+	private double value(final SuggestionCandidateData c)
+	{
+		return c.getUnitPrice() * c.getSuggestedQuantity();
+	}
+
+	/** Removal unit key: bundle code for bundle lines, candidate id otherwise. */
+	private String unitKey(final SuggestionCandidateData c)
+	{
+		return c.getBundleCode() != null && !c.getBundleCode().isEmpty() ? "B:" + c.getBundleCode() : "L:" + c.getCandidateId();
+	}
+
+	@Override
+	public List<SuggestionCandidateData> enforceStrategicCaps(final List<SuggestionCandidateData> selected,
+			final double lineCap, final double valueCap)
+	{
+		final List<SuggestionCandidateData> out = new ArrayList<>(selected);
+		while (true)
+		{
+			final int n = out.size();
+			double total = 0d;
+			double strategicValue = 0d;
+			int strategicLines = 0;
+			for (final SuggestionCandidateData c : out)
+			{
+				total += value(c);
+				if (isStrategic(c))
+				{
+					strategicLines++;
+					strategicValue += value(c);
+				}
+			}
+			final boolean linesOk = strategicLines <= Math.floor(lineCap * n + 1e-9);
+			final boolean valueOk = total <= 0d || strategicValue / total <= valueCap + 1e-9;
+			if (strategicLines == 0 || (linesOk && valueOk))
+			{
+				return out;
+			}
+			// weakest strategic unit = lowest average relevance, ties by key (deterministic)
+			final Map<String, double[]> units = new LinkedHashMap<>(); // key -> {sumRelevance, count}
+			for (final SuggestionCandidateData c : out)
+			{
+				if (isStrategic(c))
+				{
+					final double[] u = units.computeIfAbsent(unitKey(c), k -> new double[2]);
+					u[0] += c.getRelevance();
+					u[1]++;
+				}
+			}
+			String weakest = null;
+			double weakestScore = Double.MAX_VALUE;
+			for (final Map.Entry<String, double[]> e : units.entrySet())
+			{
+				final double avg = e.getValue()[0] / e.getValue()[1];
+				if (avg < weakestScore || (avg == weakestScore && e.getKey().compareTo(weakest) < 0))
+				{
+					weakest = e.getKey();
+					weakestScore = avg;
+				}
+			}
+			final String drop = weakest;
+			out.removeIf(c -> isStrategic(c) && unitKey(c).equals(drop));
+		}
+	}
+
 	// ------------------------------------------------------------------------------------------------ basket
+
+	/** A decision unit: one ordinary candidate (0..max packs) or a whole bundle (all lines or nothing). */
+	private static final class Unit
+	{
+		final List<SuggestionCandidateData> lines = new ArrayList<>();
+		boolean bundle;
+	}
 
 	@Override
 	public Map<String, Long> selectWithinBudget(final List<SuggestionCandidateData> input, final Double budget,
@@ -280,46 +435,82 @@ public class DefaultOptimizerCalculationService implements OptimizerCalculationS
 		{
 			return out;
 		}
-		final List<SuggestionCandidateData> items = new ArrayList<>(input);
-		items.sort(Comparator.comparing(SuggestionCandidateData::getCandidateId)); // deterministic
+		final List<SuggestionCandidateData> sorted = new ArrayList<>(input);
+		sorted.sort(Comparator.comparing(SuggestionCandidateData::getCandidateId)); // deterministic
+
+		final Map<String, Unit> byBundle = new LinkedHashMap<>();
+		final List<Unit> units = new ArrayList<>();
+		for (final SuggestionCandidateData c : sorted)
+		{
+			final boolean inBundle = c.getBundleCode() != null && !c.getBundleCode().isEmpty();
+			final Unit u = inBundle ? byBundle.computeIfAbsent(c.getBundleCode(), k -> {
+				final Unit nu = new Unit();
+				nu.bundle = true;
+				units.add(nu);
+				return nu;
+			}) : new Unit();
+			u.lines.add(c);
+			if (!inBundle)
+			{
+				units.add(u);
+			}
+		}
 
 		if (budget == null || budget <= 0d)
 		{
-			for (final SuggestionCandidateData c : items)
+			for (final Unit u : units)
 			{
-				out.put(c.getCandidateId(), maxPacks(c));
+				for (final SuggestionCandidateData c : u.lines)
+				{
+					out.put(c.getCandidateId(), u.bundle ? Math.max(1L, c.getSuggestedQuantity() / pack(c)) : maxPacks(c));
+				}
 			}
-			return out;
+			return sortedKeys(out);
 		}
 
 		final double g = granularity <= 0d ? 100d : granularity;
 		final int cap = (int) Math.floor(budget / g);
-		final int n = items.size();
+		final int n = units.size();
 		final long[][] dp = new long[n + 1][cap + 1]; // value scaled by 1e6
 		final int[][] choice = new int[n + 1][cap + 1];
 
 		for (int i = 1; i <= n; i++)
 		{
-			final SuggestionCandidateData c = items.get(i - 1);
-			final int unitBuckets = unitBuckets(c, g);
-			final long minPacks = minPacks(c);
-			final long maxPacks = maxPacks(c);
+			final Unit u = units.get(i - 1);
 			for (int b = 0; b <= cap; b++)
 			{
 				long best = dp[i - 1][b];
 				int bestPacks = 0;
-				for (long k = minPacks; k <= maxPacks; k++)
+				if (u.bundle)
 				{
-					final long cost = (long) unitBuckets * k;
-					if (cost > b)
+					final long cost = bundleBuckets(u, g);
+					if (cost <= b)
 					{
-						break;
+						final long v = dp[i - 1][(int) (b - cost)] + bundleValue(u);
+						if (v > best)
+						{
+							best = v;
+							bestPacks = 1;
+						}
 					}
-					final long v = dp[i - 1][(int) (b - cost)] + scaledValue(c, k, diminishingFactor);
-					if (v > best) // strict: ties keep the cheaper / earlier choice
+				}
+				else
+				{
+					final SuggestionCandidateData c = u.lines.get(0);
+					final int unitBuckets = unitBuckets(c, g);
+					for (long k = minPacks(c); k <= maxPacks(c); k++)
 					{
-						best = v;
-						bestPacks = (int) k;
+						final long cost = (long) unitBuckets * k;
+						if (cost > b)
+						{
+							break;
+						}
+						final long v = dp[i - 1][(int) (b - cost)] + scaledValue(c, k, diminishingFactor);
+						if (v > best) // strict: ties keep the cheaper / earlier choice
+						{
+							best = v;
+							bestPacks = (int) k;
+						}
 					}
 				}
 				dp[i][b] = best;
@@ -328,19 +519,55 @@ public class DefaultOptimizerCalculationService implements OptimizerCalculationS
 		}
 
 		int b = cap;
-		final Map<String, Long> reversed = new LinkedHashMap<>();
 		for (int i = n; i >= 1; i--)
 		{
 			final int packs = choice[i][b];
 			if (packs > 0)
 			{
-				final SuggestionCandidateData c = items.get(i - 1);
-				reversed.put(c.getCandidateId(), (long) packs);
-				b -= unitBuckets(c, g) * packs;
+				final Unit u = units.get(i - 1);
+				if (u.bundle)
+				{
+					for (final SuggestionCandidateData c : u.lines)
+					{
+						out.put(c.getCandidateId(), Math.max(1L, c.getSuggestedQuantity() / pack(c)));
+					}
+					b -= (int) bundleBuckets(u, g);
+				}
+				else
+				{
+					out.put(u.lines.get(0).getCandidateId(), (long) packs);
+					b -= unitBuckets(u.lines.get(0), g) * packs;
+				}
 			}
 		}
-		reversed.keySet().stream().sorted().forEach(k -> out.put(k, reversed.get(k)));
-		return out;
+		return sortedKeys(out);
+	}
+
+	private Map<String, Long> sortedKeys(final Map<String, Long> in)
+	{
+		final Map<String, Long> ordered = new LinkedHashMap<>();
+		in.keySet().stream().sorted().forEach(k -> ordered.put(k, in.get(k)));
+		return ordered;
+	}
+
+	private long bundleBuckets(final Unit u, final double g)
+	{
+		long sum = 0;
+		for (final SuggestionCandidateData c : u.lines)
+		{
+			sum += (long) unitBuckets(c, g) * Math.max(1L, c.getSuggestedQuantity() / pack(c));
+		}
+		return sum;
+	}
+
+	private long bundleValue(final Unit u)
+	{
+		long sum = 0;
+		for (final SuggestionCandidateData c : u.lines)
+		{
+			sum += scaledValue(c, Math.max(1L, c.getSuggestedQuantity() / pack(c)), 1d);
+		}
+		return sum;
 	}
 
 	private long pack(final SuggestionCandidateData c)

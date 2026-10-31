@@ -1,7 +1,7 @@
 # B2B Suggested Cart (SAP Commerce, OCC)
 
-Copy **both** folders into your `custom/` code base: `purchaseoptimizer/` (core: items, beans, DAO, service, facade) and
-`purchaseoptimizerocc/` (OCC controller + WsDTO beans). Add both to `localextensions.xml`, run `ant clean all`, then
+Copy the folders into your `custom/` code base: `purchaseoptimizer/` (core: items, beans, DAO, services, facade, interceptors, job),
+`purchaseoptimizerocc/` (OCC controller + WsDTO beans) and, for business users, `purchaseoptimizerbackoffice/` (cockpitng config). Add them to `localextensions.xml`, run `ant clean all`, then
 `ant updatesystem` (creates the `OptimizerSuggestionAudit` table). If you already have a custom OCC extension, move
 `OptimizerController.java` (and `purchaseoptimizerocc-beans.xml`) into it and drop `purchaseoptimizerocc/`.
 
@@ -48,11 +48,46 @@ product code/name/category and counts – no dealer identity, prices or contacts
 OAuth2 comes from the OCC web extension (`@Secured` on the controller). The facade independently rejects anonymous users,
 non-B2B customers and any `userId` that is not the session user (`current` or own uid).
 
+## Business configuration: pushing products (all deterministic, no AI)
+Edited in Backoffice (`purchaseoptimizerbackoffice`), stored in `purchaseoptimizer-items.xml`:
+`OptimizerConfig` (boost cap, strategic line/value share caps, evidence thresholds, versioned), `DealerSegment` (rule based:
+region, dealer-type group, usual order value band, orders per year band), `StrategicPriority` (product **or** category, bounded
+boost, dates, segments, regions), `RecoBundle` + `RecoBundleEntry` (qty ratio; optional SAP promotion code, informational only –
+pricing always comes from SAP), `RecoCampaign` (dates, segments, regions, priorities, bundles, `holdoutPercent`, `createdBy`, `approvedBy`).
+
+How the engine uses them (`DefaultOptimizerStrategyService`, `DefaultOptimizerCalculationService`):
+1. Only **ACTIVE** campaigns inside their dates that target the dealer's segment and region; priorities/bundles must be APPROVED/ACTIVE and in their own dates.
+2. Per campaign, deterministic **holdout**: HMAC-SHA256(secret, campaign|dealer) mod 100 < holdoutPercent -> no boost, still written to the audit.
+3. Eligibility (approved, online, priced for the dealer, stock status) runs **before** scoring; ineligible products never appear.
+4. **Relevance gate**: no boost unless the dealer bought related-category products at least `gateMinCategoryOrders` times in 12 months.
+5. `final = relevance + min(boost, boostCap) x gate`. Boosting an existing pattern line keeps it PATTERN; new products become `STRATEGIC`, campaign bundles `BUNDLE_CAMPAIGN` (always EXPLORATORY, template wording, never AI).
+6. Bundle quantity = dealer's typical quantity (related categories) x `qtyRatio`, rounded to pack/MOQ; bundles are **all-or-nothing** in the budget fit and in cap enforcement.
+7. After budget fit: strategic + bundle lines <= `strategicLineShareCap` of lines (rounded down) and <= `strategicValueShareCap` of cart value; weakest unit removed first.
+
+Governance: status DRAFT -> IN_REVIEW -> APPROVED -> ACTIVE -> EXPIRED enforced by validate interceptors
+(`RecoCampaign`, `StrategicPriority`, `RecoBundle`). `createdBy`/`approvedBy` are stamped from the session (cannot be forged);
+maker-checker blocks `createdBy == approvedBy`; only members of group `campaignapprover` (or admin) can approve; approved/active
+content is frozen (send back to DRAFT to edit); ACTIVE/EXPIRED are set by `campaignLifecycleJob` (hourly). ImpEx:
+`essentialdata-optimizer.impex` (roles `campaignmanager`, `campaignapprover`, `optimizerconfigadmin`, `optimizerauditor`, type rights,
+default config, job, cronjob, trigger) and `sampledata-optimizer-DEMO-ONLY.impex` (demo segments, never for production).
+Set `purchaseoptimizer.holdout.hmac.secret` (env/secrets) and keep `holdout.hmac.key.id` in step when rotating.
+
+Dealer API: groups are returned separately and labelled (`suggestionGroup` = PATTERN / AFFINITY / STRATEGIC / BUNDLE_CAMPAIGN).
+The endpoint rejects any query parameter other than `budgetTier`, `fields`, `lang`, `curr`, so no amount, boost or campaign can be sent.
+Every call writes `OptimizerSuggestionAudit` incl. `appliedStrategyJson` (campaign, priority, bundle, boost, holdout, outcome) and `holdoutKeyId`.
+
+## Tests
+* Run and passing in the authoring environment (21 tests, stubbed `@UnitTest` and generated beans): `DefaultOptimizerCalculationServiceTest`, `AiResponseValidatorTest`.
+* Written but **not run** (need the SAP Commerce test classpath/Mockito): `DefaultOptimizerStrategyServiceTest` (gate, eligibility, holdout, targeting, validity, bundles, lifecycle), `RecoCampaignInterceptorsTest` (maker-checker, workflow, approver group, frozen content), `DefaultOptimizerFacadeTest` (dealer isolation, rejected parameters).
+* Missing: DAO/ServicelayerTest integration tests, OCC controller/OAuth scope tests, cart-integration tests.
+
 ## Not verified / assumptions (no SAP Commerce install was available here)
-* Only the pure logic (`DefaultOptimizerCalculationService`, `AiResponseValidator`) was compiled and unit-tested (12 tests pass, run with a stubbed `@UnitTest` and hand-stubbed generated beans). Everything touching platform APIs is written against known OOTB APIs but **has not been compiled** – run `ant clean all` and fix any version differences.
-* beans.xml file names: if your version only generates from `<ext>-beans.xml`, merge the two bean files into `purchaseoptimizer-beans.xml`.
-* Scheme/promotion down-weighting is a hook (`isSchemePurchase`, default false) – plug in your project's scheme marker. Seasonality needs >= 24 months of data and is not applied (factor 1.0).
-* Child B2B units are not included; credit-limit ceiling is not applied (not inspected). Order status sets are configurable in `project.properties`.
-* Product attributes `orderQuantityInterval`, `minOrderQuantity`, `maxOrderQuantity` are used as pack multiple / MOQ / max.
-* `essentialdata-optimizer.impex` is optional and must be imported manually.
-* Not built (out of scope of the single-API request): nightly snapshot jobs, segments, campaigns, Backoffice config, analytics, AI tool gateway. Config reference: `project.properties` (also `optimizer.properties.sample`).
+* Everything that touches platform APIs is **uncompiled** (only a syntax-level `javac` pass was done). Run `ant clean all` and fix version differences first.
+* beans.xml file names: the OCC one uses the standard `<ext>-beans.xml` name. If `purchaseoptimizer-facade-beans.xml` is not picked up, rename it `purchaseoptimizer-beans.xml`.
+* Backoffice: the extension scaffold (`purchaseoptimizerbackoffice`) and cockpitng XML are unverified against your Backoffice version; if needed generate a module with `ant extgen -Dinput.template=ybackoffice` and copy only the config XML. No explorer-tree node is added (types are reachable via Backoffice search); add the groups to a Backoffice role so members can log in.
+* Segments: `region` = isocode of the first dealer-unit address with a region; `dealerType` = uid of a user group the unit belongs to. Adapt `resolveDealerProfile` if your model differs.
+* Peer (comparable-dealer) evidence for the relevance gate is **not implemented**; the gate uses the dealer's own related-category history only.
+* Strategic category targeting expands to direct and sub-category products, capped by `purchaseoptimizer.strategy.max.category.products`.
+* Scheme/promotion down-weighting is a hook (`isSchemePurchase`, default false). Seasonality, child B2B units and a credit-limit ceiling are not applied.
+* Order status sets and all tuning fall back to `project.properties` when no active `OptimizerConfig` exists.
+* Not built: nightly snapshot jobs, analytics/uplift reporting, AI tool gateway.

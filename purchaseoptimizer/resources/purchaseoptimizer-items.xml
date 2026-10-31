@@ -1,6 +1,33 @@
 <?xml version="1.0" encoding="ISO-8859-1"?>
 <items xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="items.xsd">
 
+	<collectiontypes>
+		<collectiontype code="DealerSegmentCollection" elementtype="DealerSegment" autocreate="true" type="set"/>
+		<collectiontype code="StrategicPriorityCollection" elementtype="StrategicPriority" autocreate="true" type="set"/>
+		<collectiontype code="RecoBundleCollection" elementtype="RecoBundle" autocreate="true" type="set"/>
+		<collectiontype code="OptimizerRegionCollection" elementtype="java.lang.String" autocreate="true" type="set"/>
+	</collectiontypes>
+
+	<enumtypes>
+		<enumtype code="RecoStatus" autocreate="true" generate="true" dynamic="false">
+			<description>DRAFT -> IN_REVIEW -> APPROVED -> ACTIVE -> EXPIRED (ACTIVE/EXPIRED are set by the lifecycle job)</description>
+			<value code="DRAFT"/>
+			<value code="IN_REVIEW"/>
+			<value code="APPROVED"/>
+			<value code="ACTIVE"/>
+			<value code="EXPIRED"/>
+		</enumtype>
+	</enumtypes>
+
+	<relations>
+		<relation code="RecoBundle2RecoBundleEntryRel" localized="false" autocreate="true" generate="true">
+			<sourceElement qualifier="bundle" type="RecoBundle" cardinality="one"/>
+			<targetElement qualifier="entries" type="RecoBundleEntry" cardinality="many" collectiontype="list" ordered="true">
+				<modifiers partof="true"/>
+			</targetElement>
+		</relation>
+	</relations>
+
 	<itemtypes>
 
 		<!--
@@ -53,6 +80,21 @@
 					<persistence type="property"/>
 					<description>Optimizer outcome / fallback reason code</description>
 				</attribute>
+				<attribute qualifier="holdoutKeyId" type="java.lang.String">
+					<persistence type="property"/>
+					<description>Id of the HMAC key used for holdout assignment (rotation-ready)</description>
+				</attribute>
+				<attribute qualifier="appliedStrategyJson" type="java.lang.String">
+					<persistence type="property">
+						<columntype database="oracle"><value>CLOB</value></columntype>
+						<columntype database="sap"><value>NCLOB</value></columntype>
+						<columntype database="mysql"><value>TEXT</value></columntype>
+						<columntype database="sqlserver"><value>nvarchar(max)</value></columntype>
+						<columntype database="hsqldb"><value>LONGVARCHAR</value></columntype>
+						<columntype><value>HYBRIS.LONG_STRING</value></columntype>
+					</persistence>
+					<description>[{campaignCode, priorityCode, bundleCode, boost, holdout, outcome}] for every campaign evaluated</description>
+				</attribute>
 				<attribute qualifier="selectionJson" type="java.lang.String">
 					<persistence type="property">
 						<columntype database="oracle"><value>CLOB</value></columntype>
@@ -69,6 +111,260 @@
 				<index name="optAuditUnitIdx">
 					<key attribute="b2bUnit"/>
 					<key attribute="creationtime"/>
+				</index>
+			</indexes>
+		</itemtype>
+
+
+		<!-- ============================================================================================ -->
+		<!--  Business configuration: push products (all editable in Backoffice, no code change needed)   -->
+		<!--  typecodes 31151..31157: pick other unused values >= 10000 if they clash                      -->
+		<!-- ============================================================================================ -->
+
+		<itemtype code="OptimizerConfig" autocreate="true" generate="true"
+		          jaloclass="com.purchaseoptimizer.jalo.OptimizerConfig">
+			<description>Versioned tuning. The active config with the highest version and activeFrom in the past is used.</description>
+			<deployment table="optConfig" typecode="31151"/>
+			<attributes>
+				<attribute qualifier="code" type="java.lang.String">
+					<persistence type="property"/>
+					<modifiers optional="false" unique="true" initial="true"/>
+				</attribute>
+				<attribute qualifier="version" type="java.lang.Integer">
+					<persistence type="property"/>
+					<defaultvalue>Integer.valueOf(1)</defaultvalue>
+				</attribute>
+				<attribute qualifier="active" type="java.lang.Boolean">
+					<persistence type="property"/>
+					<defaultvalue>Boolean.TRUE</defaultvalue>
+				</attribute>
+				<attribute qualifier="activeFrom" type="java.util.Date">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="boostCap" type="java.lang.Double">
+					<persistence type="property"/>
+					<defaultvalue>Double.valueOf(0.15)</defaultvalue>
+					<description>Max strategic boost added to a relevance score (0..1)</description>
+				</attribute>
+				<attribute qualifier="strategicLineShareCap" type="java.lang.Double">
+					<persistence type="property"/>
+					<defaultvalue>Double.valueOf(0.25)</defaultvalue>
+					<description>Max share of suggested lines that may be strategic/bundle lines</description>
+				</attribute>
+				<attribute qualifier="strategicValueShareCap" type="java.lang.Double">
+					<persistence type="property"/>
+					<defaultvalue>Double.valueOf(0.30)</defaultvalue>
+					<description>Max share of suggested cart value that may be strategic/bundle lines</description>
+				</attribute>
+				<attribute qualifier="gateMinCategoryOrders" type="java.lang.Integer">
+					<persistence type="property"/>
+					<defaultvalue>Integer.valueOf(1)</defaultvalue>
+					<description>Min orders in the last 12 months in a related category before a boost applies</description>
+				</attribute>
+				<attribute qualifier="minOrders" type="java.lang.Integer">
+					<persistence type="property"/>
+					<defaultvalue>Integer.valueOf(3)</defaultvalue>
+					<description>Min completed orders of a product before it is a pattern suggestion</description>
+				</attribute>
+				<attribute qualifier="dueMin" type="java.lang.Double">
+					<persistence type="property"/>
+					<defaultvalue>Double.valueOf(0.85)</defaultvalue>
+				</attribute>
+				<attribute qualifier="dueMax" type="java.lang.Double">
+					<persistence type="property"/>
+					<defaultvalue>Double.valueOf(1.30)</defaultvalue>
+				</attribute>
+			</attributes>
+		</itemtype>
+
+		<itemtype code="DealerSegment" autocreate="true" generate="true"
+		          jaloclass="com.purchaseoptimizer.jalo.DealerSegment">
+			<description>Rule-based dealer segment. Blank/null rule = matches any dealer on that rule.</description>
+			<deployment table="optDealerSegment" typecode="31152"/>
+			<attributes>
+				<attribute qualifier="code" type="java.lang.String">
+					<persistence type="property"/>
+					<modifiers optional="false" unique="true" initial="true"/>
+				</attribute>
+				<attribute qualifier="name" type="localized:java.lang.String">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="region" type="java.lang.String">
+					<persistence type="property"/>
+					<description>Region isocode of the dealer unit's address (blank = any)</description>
+				</attribute>
+				<attribute qualifier="dealerType" type="java.lang.String">
+					<persistence type="property"/>
+					<description>Code of a user group the dealer unit is a member of, e.g. distributor group (blank = any)</description>
+				</attribute>
+				<attribute qualifier="minOrderValue" type="java.lang.Double">
+					<persistence type="property"/>
+					<description>Dealer's usual order value, lower bound</description>
+				</attribute>
+				<attribute qualifier="maxOrderValue" type="java.lang.Double">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="minOrdersPerYear" type="java.lang.Integer">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="maxOrdersPerYear" type="java.lang.Integer">
+					<persistence type="property"/>
+				</attribute>
+			</attributes>
+		</itemtype>
+
+		<itemtype code="StrategicPriority" autocreate="true" generate="true"
+		          jaloclass="com.purchaseoptimizer.jalo.StrategicPriority">
+			<description>A product or category the business wants to promote. Used only through an ACTIVE RecoCampaign.</description>
+			<deployment table="optStrategicPriority" typecode="31153"/>
+			<attributes>
+				<attribute qualifier="code" type="java.lang.String">
+					<persistence type="property"/>
+					<modifiers optional="false" unique="true" initial="true"/>
+				</attribute>
+				<attribute qualifier="product" type="Product">
+					<persistence type="property"/>
+					<description>Target product OR category (exactly one)</description>
+				</attribute>
+				<attribute qualifier="category" type="Category">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="boost" type="java.lang.Double">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+					<defaultvalue>Double.valueOf(0.05)</defaultvalue>
+					<description>0..purchaseoptimizer.boost.hard.max; further capped by OptimizerConfig.boostCap</description>
+				</attribute>
+				<attribute qualifier="validFrom" type="java.util.Date">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+				</attribute>
+				<attribute qualifier="validTo" type="java.util.Date">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+				</attribute>
+				<attribute qualifier="segments" type="DealerSegmentCollection">
+					<persistence type="property"/>
+					<description>Empty = all segments</description>
+				</attribute>
+				<attribute qualifier="regions" type="OptimizerRegionCollection">
+					<persistence type="property"/>
+					<description>Region isocodes. Empty = all regions</description>
+				</attribute>
+				<attribute qualifier="status" type="RecoStatus">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+					<defaultvalue>em().getEnumerationValue("RecoStatus","DRAFT")</defaultvalue>
+				</attribute>
+			</attributes>
+		</itemtype>
+
+		<itemtype code="RecoBundle" autocreate="true" generate="true"
+		          jaloclass="com.purchaseoptimizer.jalo.RecoBundle">
+			<description>A set of products suggested together (all-or-nothing). Pricing comes only from SAP price rows / promotions.</description>
+			<deployment table="optRecoBundle" typecode="31154"/>
+			<attributes>
+				<attribute qualifier="code" type="java.lang.String">
+					<persistence type="property"/>
+					<modifiers optional="false" unique="true" initial="true"/>
+				</attribute>
+				<attribute qualifier="name" type="localized:java.lang.String">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="promotionCode" type="java.lang.String">
+					<persistence type="property"/>
+					<description>Optional code of an existing SAP promotion/rule that prices this bundle. Informational only.</description>
+				</attribute>
+				<attribute qualifier="validFrom" type="java.util.Date">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+				</attribute>
+				<attribute qualifier="validTo" type="java.util.Date">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+				</attribute>
+				<attribute qualifier="status" type="RecoStatus">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+					<defaultvalue>em().getEnumerationValue("RecoStatus","DRAFT")</defaultvalue>
+				</attribute>
+			</attributes>
+		</itemtype>
+
+		<itemtype code="RecoBundleEntry" autocreate="true" generate="true"
+		          jaloclass="com.purchaseoptimizer.jalo.RecoBundleEntry">
+			<deployment table="optRecoBundleEntry" typecode="31155"/>
+			<attributes>
+				<attribute qualifier="product" type="Product">
+					<persistence type="property"/>
+					<modifiers optional="false" initial="true"/>
+				</attribute>
+				<attribute qualifier="qtyRatio" type="java.lang.Double">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+					<defaultvalue>Double.valueOf(1.0)</defaultvalue>
+					<description>Multiplier applied to the dealer's typical order quantity (&gt; 0)</description>
+				</attribute>
+			</attributes>
+		</itemtype>
+
+		<itemtype code="RecoCampaign" autocreate="true" generate="true"
+		          jaloclass="com.purchaseoptimizer.jalo.RecoCampaign">
+			<description>Maker-checker controlled campaign tying priorities and bundles to segments/regions and dates.</description>
+			<deployment table="optRecoCampaign" typecode="31156"/>
+			<attributes>
+				<attribute qualifier="code" type="java.lang.String">
+					<persistence type="property"/>
+					<modifiers optional="false" unique="true" initial="true"/>
+				</attribute>
+				<attribute qualifier="name" type="localized:java.lang.String">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="validFrom" type="java.util.Date">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+				</attribute>
+				<attribute qualifier="validTo" type="java.util.Date">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+				</attribute>
+				<attribute qualifier="segments" type="DealerSegmentCollection">
+					<persistence type="property"/>
+					<description>Empty = all segments</description>
+				</attribute>
+				<attribute qualifier="regions" type="OptimizerRegionCollection">
+					<persistence type="property"/>
+					<description>Region isocodes. Empty = all regions</description>
+				</attribute>
+				<attribute qualifier="priorities" type="StrategicPriorityCollection">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="bundles" type="RecoBundleCollection">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="holdoutPercent" type="java.lang.Integer">
+					<persistence type="property"/>
+					<defaultvalue>Integer.valueOf(10)</defaultvalue>
+					<description>0..100. Dealers in the holdout receive no boost; assignment is a keyed hash of campaign and dealer.</description>
+				</attribute>
+				<attribute qualifier="status" type="RecoStatus">
+					<persistence type="property"/>
+					<modifiers optional="false"/>
+					<defaultvalue>em().getEnumerationValue("RecoStatus","DRAFT")</defaultvalue>
+				</attribute>
+				<attribute qualifier="createdBy" type="User">
+					<persistence type="property"/>
+					<description>Set automatically to the creating user</description>
+				</attribute>
+				<attribute qualifier="approvedBy" type="User">
+					<persistence type="property"/>
+					<description>Set automatically to the approving user; must differ from createdBy</description>
+				</attribute>
+			</attributes>
+			<indexes>
+				<index name="optCampaignStatusIdx">
+					<key attribute="status"/>
+					<key attribute="validTo"/>
 				</index>
 			</indexes>
 		</itemtype>
