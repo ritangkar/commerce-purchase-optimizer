@@ -1,4 +1,4 @@
-# Birla Opus – Suggested Cart (SAP Commerce, OCC)
+Suggested Cart (SAP Commerce, OCC)
 
 Copy the folder `birlaopusoptimizer/` into your `custom/` code base, add
 `<extension name="birlaopusoptimizer"/>` to `localextensions.xml`, run `ant clean all`, then `ant updatesystem`
