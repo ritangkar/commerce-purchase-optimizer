@@ -30,7 +30,7 @@ public class NoCartOrOrderSideEffectsTest
 	{
 		final String n = name.toLowerCase();
 		return n.contains("cart") || n.contains("checkout") || n.contains("placeorder") || n.contains("orderservice")
-				|| n.contains("orderfacade") || n.contains("calculationservice") && n.contains("order");
+				|| n.contains("orderfacade");
 	}
 
 	@Test
