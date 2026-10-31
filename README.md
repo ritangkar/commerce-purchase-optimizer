@@ -77,9 +77,14 @@ The endpoint rejects any query parameter other than `budgetTier`, `fields`, `lan
 Every call writes `OptimizerSuggestionAudit` incl. `appliedStrategyJson` (campaign, priority, bundle, boost, holdout, outcome) and `holdoutKeyId`.
 
 ## Tests
-* Run and passing in the authoring environment (21 tests, stubbed `@UnitTest` and generated beans): `DefaultOptimizerCalculationServiceTest`, `AiResponseValidatorTest`.
-* Written but **not run** (need the SAP Commerce test classpath/Mockito): `DefaultOptimizerStrategyServiceTest` (gate, eligibility, holdout, targeting, validity, bundles, lifecycle), `RecoCampaignInterceptorsTest` (maker-checker, workflow, approver group, frozen content), `DefaultOptimizerFacadeTest` (dealer isolation, rejected parameters).
-* Missing: DAO/ServicelayerTest integration tests, OCC controller/OAuth scope tests, cart-integration tests.
+* **Run and passing in the authoring environment** (21 tests, stubbed `@UnitTest` and hand-stubbed generated beans): `DefaultOptimizerCalculationServiceTest`, `AiResponseValidatorTest`.
+* **Written but NOT run** (need the SAP Commerce test classpath; Mockito/ServicelayerBaseTest were unavailable):
+  * Unit/Mockito: `DefaultOptimizerStrategyServiceTest`, `RecoCampaignInterceptorsTest`, `DefaultOptimizerFacadeTest`, `DefaultOptimizerServiceTemplateTest`, `NoCartOrOrderSideEffectsTest`.
+  * Integration (`@IntegrationTest`, `ServicelayerBaseTest`, shared fixtures in `integration/AbstractOptimizerIntegrationTest`): `DefaultOptimizerDaoIntegrationTest` (unit/window/status scoping, ordering, injection text as data, config and campaign queries), `RecoGovernanceIntegrationTest` (real interceptors and users: maker-checker, approver group, workflow, frozen content, lifecycle by date), `OptimizerServiceIntegrationTest` (pipeline on real orders/prices: open PO, cancelled, dealer isolation, gate, holdout, expired/draft campaigns, caps, audit).
+  * OCC: `purchaseoptimizerocc/web/testsrc/.../OptimizerControllerTest` (standalone MockMvc with the real facade: rejected parameters, cross-dealer 403, anonymous 403, error shape, GET-only, `@Secured` roles, separate groups).
+* **Manual only**: the OAuth filter chain / scope enforcement - see `docs/occ-smoke-tests.md` (not run).
+* There is no cart code (the API never creates a cart or order), so instead of a cart-integration test `NoCartOrOrderSideEffectsTest` guards that no cart/checkout/order service is ever wired into the suggestion path.
+* Still missing: a performance/load test (p95 target), and automated OAuth-scope tests against a running OCC.
 
 ## Not verified / assumptions (no SAP Commerce install was available here)
 * Everything that touches platform APIs is **uncompiled** (only a syntax-level `javac` pass was done). Run `ant clean all` and fix version differences first.
