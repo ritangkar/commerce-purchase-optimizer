@@ -1,7 +1,7 @@
-Suggested Cart (SAP Commerce, OCC)
+# B2B Suggested Cart (SAP Commerce, OCC)
 
-Copy the folder `birlaopusoptimizer/` into your `custom/` code base, add
-`<extension name="birlaopusoptimizer"/>` to `localextensions.xml`, run `ant clean all`, then `ant updatesystem`
+Copy the folder `purchaseoptimizer/` into your `custom/` code base, add
+`<extension name="purchaseoptimizer"/>` to `localextensions.xml`, run `ant clean all`, then `ant updatesystem`
 (creates the `OptimizerSuggestionAudit` table from `items.xml`).
 
 ## The one API
@@ -12,7 +12,7 @@ Returns `ProductListWsDTO` (`products[]` = `ProductWsDTO`) extended with: `sugge
 (Observed/Inferred). No amount is accepted from the client; the order size is derived from the dealer's history.
 It never creates a cart or an order.
 
-## Layers (all wired with `@Resource`, beans in `birlaopusoptimizer-spring.xml`)
+## Layers (all wired with `@Resource`, beans in `purchaseoptimizer-spring.xml`)
 
 | Layer | Interface | Impl |
 |---|---|---|
@@ -21,9 +21,9 @@ It never creates a cart or an order.
 | Service | `service/OptimizerService` | `service/impl/DefaultOptimizerService` |
 | DAO | `dao/OptimizerOrderHistoryDao` | `dao/impl/DefaultOptimizerOrderHistoryDao` |
 
-Beans/DTOs: `resources/birlaopusoptimizer-facade-beans.xml` (extends `ProductData`) and
-`resources/birlaopusoptimizer-occ-beans.xml` (extends `ProductWsDTO`). New table: `OptimizerSuggestionAudit` in
-`birlaopusoptimizer-items.xml` (typecode 31150 – change if it collides).
+Beans/DTOs: `resources/purchaseoptimizer-facade-beans.xml` (extends `ProductData`) and
+`resources/purchaseoptimizer-occ-beans.xml` (extends `ProductWsDTO`). New table: `OptimizerSuggestionAudit` in
+`purchaseoptimizer-items.xml` (typecode 31150 – change if it collides).
 
 ## What the service does (primary-sales data only)
 1. Completed orders of the customer's B2B unit (last 12 months); free-of-charge entries excluded; returned quantities netted; open POs (ordered, not completed) suppress their products.
@@ -38,19 +38,19 @@ Beans/DTOs: `resources/birlaopusoptimizer-facade-beans.xml` (extends `ProductDat
 
 ## OpenAI
 `service/ai/OpenAiClient.java` → `private String open_ai_api_key = "";` Fill it in (or set
-`birlaopus.optimizer.ai.openai.apikey`) and set `birlaopus.optimizer.ai.enabled=true`. The model only receives candidate ids,
+`purchaseoptimizer.ai.openai.apikey`) and set `purchaseoptimizer.ai.enabled=true`. The model only receives candidate ids,
 product code/name/category and counts – no dealer identity, prices or contacts. Without a key the feature works with templates.
 
 ## Controller placement (please read)
 The controller lives in this extension's `web/` module so it compiles, but OCC security (OAuth2 filters) comes from your
 OCC web extension. **Recommended:** move `OptimizerController.java` into your existing OCC extension's `web/src` and add
-`<context:component-scan base-package="com.birlaopus.optimizer.controller"/>` to its `spring-mvc` config, then remove the
+`<context:component-scan base-package="com.purchaseoptimizer.controller"/>` to its `spring-mvc` config, then remove the
 `<webmodule>` from `extensioninfo.xml`. The facade independently rejects anonymous users, non-B2B customers, and any
 `userId` that is not the session user (`current` or own uid).
 
 ## Not verified / assumptions (no SAP Commerce install was available here)
 * Only the pure logic (`util/*`, `AiResponseValidator`) was compiled and unit-tested (23 tests pass with a stubbed `@UnitTest`). Everything touching platform APIs is written against known OOTB APIs but **has not been compiled** – run `ant clean all` and fix any version differences.
-* beans.xml file names: if your version only generates from `<ext>-beans.xml`, merge the two bean files into `birlaopusoptimizer-beans.xml`.
+* beans.xml file names: if your version only generates from `<ext>-beans.xml`, merge the two bean files into `purchaseoptimizer-beans.xml`.
 * Scheme/promotion down-weighting is a hook (`isSchemePurchase`, default false) – plug in your project's scheme marker. Seasonality needs >= 24 months of data and is not applied (factor 1.0).
 * Child B2B units are not included; credit-limit ceiling is not applied (not inspected). Order status sets are configurable in `project.properties`.
 * Product attributes `orderQuantityInterval`, `minOrderQuantity`, `maxOrderQuantity` are used as pack multiple / MOQ / max.

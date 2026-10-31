@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extensioninfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="extensioninfo.xsd">
+
+	<extension abstractclassprefix="Purchaseoptimizer"
+	           classprefix="Purchaseoptimizer"
+	           name="purchaseoptimizer">
+
+		<requires-extension name="b2bcommerce"/>
+		<requires-extension name="commercefacades"/>
+		<requires-extension name="commercewebservicescommons"/>
+		<requires-extension name="webservicescommons"/>
+
+		<coremodule generated="true"
+		            manager="com.purchaseoptimizer.jalo.PurchaseoptimizerManager"
+		            packageroot="com.purchaseoptimizer"/>
+
+		<!-- Holds OptimizerController. See README for relocating it into an existing OCC web extension. -->
+		<webmodule jspcompile="false" webroot="/purchaseoptimizer"/>
+
+	</extension>
+</extensioninfo>

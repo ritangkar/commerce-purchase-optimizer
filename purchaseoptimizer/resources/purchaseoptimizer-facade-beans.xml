@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!--
+	Facade-layer DTO extension. Re-declaring an OOTB bean class merges the properties into it.
+	NOTE: if your platform version only picks up "<extensionname>-beans.xml", rename this file
+	to purchaseoptimizer-beans.xml and paste the occ bean block below into the same file.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:noNamespaceSchemaLocation="beans.xsd">
+
+	<bean class="de.hybris.platform.commercefacades.product.data.ProductData">
+		<property name="suggestedQuantity" type="java.lang.Long"/>
+		<property name="suggestionReason" type="java.lang.String"/>
+		<property name="confidenceTier" type="java.lang.String"/>
+		<property name="suggestionGroup" type="java.lang.String"/>
+		<property name="explanationSource" type="java.lang.String"/>
+		<property name="evidenceLabels" type="java.util.List&lt;java.lang.String&gt;"/>
+	</bean>
+
+</beans>

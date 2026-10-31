@@ -1,67 +1,67 @@
 # -----------------------------------------------------------------------------
-# Birla Opus - B2B Purchase Pattern Optimizer
+# B2B Purchase Pattern Optimizer
 # Override any value in local.properties / env / CCv2 secrets.
 # -----------------------------------------------------------------------------
-birlaopusoptimizer.application-context=birlaopusoptimizer-spring.xml
+purchaseoptimizer.application-context=purchaseoptimizer-spring.xml
 
 # ---- Feature flags -----------------------------------------------------------
-birlaopus.optimizer.enabled=true
+purchaseoptimizer.enabled=true
 # OpenAI explanations. Needs a key: either open_ai_api_key in OpenAiClient.java or the property below.
-birlaopus.optimizer.ai.enabled=false
+purchaseoptimizer.ai.enabled=false
 
 # ---- History / hygiene -------------------------------------------------------
-birlaopus.optimizer.history.months=12
-birlaopus.optimizer.open.lookback.days=120
+purchaseoptimizer.history.months=12
+purchaseoptimizer.open.lookback.days=120
 # Order status codes counted as completed purchase history
-birlaopus.optimizer.status.completed=COMPLETED
+purchaseoptimizer.status.completed=COMPLETED
 # Order status codes treated as open POs (ordered, not yet completed)
-birlaopus.optimizer.status.open=CREATED,ON_VALIDATION,PENDING_APPROVAL,PENDING_APPROVAL_FROM_MERCHANT,APPROVED,APPROVED_BY_MERCHANT,PROCESSING
-birlaopus.optimizer.scheme.weight=0.5
+purchaseoptimizer.status.open=CREATED,ON_VALIDATION,PENDING_APPROVAL,PENDING_APPROVAL_FROM_MERCHANT,APPROVED,APPROVED_BY_MERCHANT,PROCESSING
+purchaseoptimizer.scheme.weight=0.5
 
 # ---- Replenishment -----------------------------------------------------------
-birlaopus.optimizer.min.orders=3
-birlaopus.optimizer.due.min=0.85
-birlaopus.optimizer.due.max=1.30
-birlaopus.optimizer.due.drop.above=5.0
+purchaseoptimizer.min.orders=3
+purchaseoptimizer.due.min=0.85
+purchaseoptimizer.due.max=1.30
+purchaseoptimizer.due.drop.above=5.0
 
 # ---- Quantity ----------------------------------------------------------------
-birlaopus.optimizer.qty.median.weight=0.6
-birlaopus.optimizer.qty.ewma.weight=0.4
-birlaopus.optimizer.qty.trend.min=0.85
-birlaopus.optimizer.qty.trend.max=1.15
-birlaopus.optimizer.qty.p90.cap.factor=1.25
+purchaseoptimizer.qty.median.weight=0.6
+purchaseoptimizer.qty.ewma.weight=0.4
+purchaseoptimizer.qty.trend.min=0.85
+purchaseoptimizer.qty.trend.max=1.15
+purchaseoptimizer.qty.p90.cap.factor=1.25
 
 # ---- Scoring (must sum to 1.0) ----------------------------------------------
-birlaopus.optimizer.score.due=0.45
-birlaopus.optimizer.score.mix=0.20
-birlaopus.optimizer.score.affinity=0.20
-birlaopus.optimizer.score.recency=0.15
+purchaseoptimizer.score.due=0.45
+purchaseoptimizer.score.mix=0.20
+purchaseoptimizer.score.affinity=0.20
+purchaseoptimizer.score.recency=0.15
 
 # ---- Product-reference (affinity gap) candidates ----------------------------
-birlaopus.optimizer.affinity.enabled=true
-birlaopus.optimizer.affinity.min.source.orders=3
-birlaopus.optimizer.affinity.max.lines=3
+purchaseoptimizer.affinity.enabled=true
+purchaseoptimizer.affinity.min.source.orders=3
+purchaseoptimizer.affinity.max.lines=3
 
 # ---- Automatic budget profile -----------------------------------------------
-birlaopus.optimizer.budget.min.orders=3
-birlaopus.optimizer.budget.high.min.orders=8
+purchaseoptimizer.budget.min.orders=3
+purchaseoptimizer.budget.high.min.orders=8
 # k-th highest order value in window = HIGH tier (allowed 4 or 5)
-birlaopus.optimizer.budget.high.k=4
-birlaopus.optimizer.budget.granularity=100
-birlaopus.optimizer.max.lines=25
+purchaseoptimizer.budget.high.k=4
+purchaseoptimizer.budget.granularity=100
+purchaseoptimizer.max.lines=25
 # Max lines when no budget profile can be derived (fewer than budget.min.orders orders)
-birlaopus.optimizer.max.lines.exploratory=10
-birlaopus.optimizer.diminishing.factor=0.8
+purchaseoptimizer.max.lines.exploratory=10
+purchaseoptimizer.diminishing.factor=0.8
 
 # ---- OpenAI ------------------------------------------------------------------
-birlaopus.optimizer.ai.openai.endpoint=https://api.openai.com/v1/chat/completions
-birlaopus.optimizer.ai.openai.model=gpt-4o-mini
-birlaopus.optimizer.ai.openai.apikey=
-birlaopus.optimizer.ai.timeout.ms=8000
-birlaopus.optimizer.ai.max.tokens=900
-birlaopus.optimizer.ai.explanation.maxlength=240
+purchaseoptimizer.ai.openai.endpoint=https://api.openai.com/v1/chat/completions
+purchaseoptimizer.ai.openai.model=gpt-4o-mini
+purchaseoptimizer.ai.openai.apikey=
+purchaseoptimizer.ai.timeout.ms=8000
+purchaseoptimizer.ai.max.tokens=900
+purchaseoptimizer.ai.explanation.maxlength=240
 # Simple circuit breaker: after N consecutive failures stay in template mode for cooldown seconds
-birlaopus.optimizer.ai.breaker.failures=3
-birlaopus.optimizer.ai.breaker.cooldown.seconds=300
+purchaseoptimizer.ai.breaker.failures=3
+purchaseoptimizer.ai.breaker.cooldown.seconds=300
 # Per-dealer calls per minute
-birlaopus.optimizer.ai.ratelimit.per.minute=5
+purchaseoptimizer.ai.ratelimit.per.minute=5

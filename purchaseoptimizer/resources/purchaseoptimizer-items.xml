@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<items xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="items.xsd">
+
+	<itemtypes>
+
+		<!--
+			Audit of every suggested-cart call. Holds only product codes / quantities / flags.
+			No dealer name, price, or prompt payload is stored.
+			typecode 31150: pick another unused value >= 10000 if it clashes in your codebase.
+		-->
+		<itemtype code="OptimizerSuggestionAudit" autocreate="true" generate="true"
+		          jaloclass="com.purchaseoptimizer.jalo.OptimizerSuggestionAudit">
+			<deployment table="optSuggestionAudit" typecode="31150"/>
+			<attributes>
+				<attribute qualifier="auditId" type="java.lang.String">
+					<persistence type="property"/>
+					<modifiers optional="false" unique="true" initial="true"/>
+				</attribute>
+				<attribute qualifier="b2bUnit" type="B2BUnit">
+					<persistence type="property"/>
+					<modifiers optional="false" initial="true"/>
+				</attribute>
+				<attribute qualifier="customer" type="B2BCustomer">
+					<persistence type="property"/>
+					<modifiers optional="false" initial="true"/>
+				</attribute>
+				<attribute qualifier="budgetTier" type="java.lang.String">
+					<persistence type="property"/>
+					<description>USUAL / HIGH</description>
+				</attribute>
+				<attribute qualifier="profileSource" type="java.lang.String">
+					<persistence type="property"/>
+					<description>OWN_HISTORY or EXPLORATORY</description>
+				</attribute>
+				<attribute qualifier="budgetValue" type="java.lang.Double">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="candidateCount" type="java.lang.Integer">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="selectedCount" type="java.lang.Integer">
+					<persistence type="property"/>
+				</attribute>
+				<attribute qualifier="aiUsed" type="java.lang.Boolean">
+					<persistence type="property"/>
+					<defaultvalue>Boolean.FALSE</defaultvalue>
+				</attribute>
+				<attribute qualifier="fallbackUsed" type="java.lang.Boolean">
+					<persistence type="property"/>
+					<defaultvalue>Boolean.FALSE</defaultvalue>
+				</attribute>
+				<attribute qualifier="reasonCode" type="java.lang.String">
+					<persistence type="property"/>
+					<description>Optimizer outcome / fallback reason code</description>
+				</attribute>
+				<attribute qualifier="selectionJson" type="java.lang.String">
+					<persistence type="property">
+						<columntype database="oracle"><value>CLOB</value></columntype>
+						<columntype database="sap"><value>NCLOB</value></columntype>
+						<columntype database="mysql"><value>TEXT</value></columntype>
+						<columntype database="sqlserver"><value>nvarchar(max)</value></columntype>
+						<columntype database="hsqldb"><value>LONGVARCHAR</value></columntype>
+						<columntype><value>HYBRIS.LONG_STRING</value></columntype>
+					</persistence>
+					<description>[{candidateId, productCode, quantity, group, tier}] - no prices, no identities</description>
+				</attribute>
+			</attributes>
+			<indexes>
+				<index name="optAuditUnitIdx">
+					<key attribute="b2bUnit"/>
+					<key attribute="creationtime"/>
+				</index>
+			</indexes>
+		</itemtype>
+
+	</itemtypes>
+</items>
